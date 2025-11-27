@@ -1,53 +1,88 @@
-# HFT Bot for Deriv (MT5)
+# Deriv Trading Bot
 
-This is a High-Frequency Trading (HFT) bot designed to connect to MetaTrader 5 (MT5) and execute trades based on a defined strategy.
+High-frequency grid trading bot for Deriv with multi-user support and Supabase authentication.
 
-## Prerequisites
+## Features
 
-1.  **MetaTrader 5 Terminal**: Download and install the MT5 terminal from your broker (e.g., Deriv).
-2.  **Python 3.8+**: Ensure Python is installed on your system.
-3.  **MT5 Account**: You need a Demo or Real account.
+- ✅ Grid trading strategy with configurable parameters
+- ✅ Multi-user support with session management
+- ✅ Supabase authentication and API token storage
+- ✅ Real-time WebSocket connection to Deriv API
+- ✅ Risk management (max runtime, drawdown limits)
+- ✅ Responsive dark/light mode UI
+- ✅ Mobile-friendly dashboard
 
-## Setup
+## Quick Start
 
-1.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
+### Prerequisites
 
-2.  **Configuration**:
-    -   Open `config.py`.
-    -   Update `MT5_LOGIN`, `MT5_PASSWORD`, and `MT5_SERVER` with your credentials.
-    -   Adjust trading settings (Symbol, Volume, etc.) as needed.
+- Python 3.8+
+- Deriv API token ([Get yours here](https://app.deriv.com/account/api-token))
+- Supabase account (optional, for multi-user setup)
 
-    *Note: It is recommended to use environment variables for credentials.*
+### Installation
 
-3.  **MT5 Terminal**:
-    -   Open MT5.
-    -   Go to `Tools` -> `Options` -> `Expert Advisors`.
-    -   Enable "Allow algorithmic trading".
+1. Clone the repository:
+```bash
+git clone https://github.com/anthonyy616/deriv-bot.git
+cd deriv-bot
+```
 
-## Running the Bot
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
-Run the main script:
+3. Configure environment:
+```bash
+cp .env.example .env
+# Edit .env with your credentials
+```
+
+4. (Optional) Set up Supabase:
+- Create a Supabase project
+- Run `supabase_schema.sql` in the SQL editor
+- Update `.env` with your Supabase URL and key
+
+### Running Locally
+
 ```bash
 python main.py
 ```
 
-The bot will:
-1.  Launch/Connect to the MT5 Terminal.
-2.  Login to your account.
-3.  Start monitoring the configured symbol (default: EURUSD).
-4.  Log price updates and actions to `trade_bot.log` and the console.
+Access the dashboard at `http://localhost:8000`
 
-## Project Structure
+## Deployment
 
--   `main.py`: Entry point. Orchestrates the bot's lifecycle.
--   `mt5_interface.py`: Handles all interactions with the MT5 terminal (connection, data, orders).
--   `config.py`: Configuration settings.
--   `requirements.txt`: Python dependencies.
+### Backend (Railway/Render/DigitalOcean)
+1. Deploy the Python backend to your preferred platform
+2. Set environment variables (SUPABASE_URL, SUPABASE_KEY)
+3. Note the deployed backend URL
+
+### Frontend (Vercel)
+1. Update line 414 in `static/index.html` with your backend URL
+2. Deploy to Vercel
+3. Users can access at your Vercel URL
+
+## Configuration
+
+All bot parameters are configurable via the web UI:
+- **Spread**: Distance between grid levels
+- **Max Positions**: Maximum concurrent positions
+- **Max Runtime**: Auto-stop after N minutes (0 = infinite)
+- **Max Drawdown**: Auto-stop if loss exceeds $N (0 = disabled)
+
+## Architecture
+
+- **Backend**: FastAPI + Deriv WebSocket API
+- **Frontend**: Vanilla JS + TailwindCSS
+- **Database**: Supabase (PostgreSQL)
+- **Auth**: Session-based with Supabase storage
+
+## License
+
+MIT
 
 ## Disclaimer
 
-Trading involves risk. This bot is for educational and experimental purposes. Use at your own risk.
-# deriv-bot
+Trading involves risk. Use at your own discretion. This bot is for educational purposes.

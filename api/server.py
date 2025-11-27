@@ -115,4 +115,3 @@ async def get_status(x_session_id: str = Header(None)):
 async def get_supabase():
     return {"supabase": supabase}
 
-    
