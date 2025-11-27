@@ -50,3 +50,4 @@ The bot will:
 ## Disclaimer
 
 Trading involves risk. This bot is for educational and experimental purposes. Use at your own risk.
+# deriv-bot
