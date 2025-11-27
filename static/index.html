@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deriv Trade Bot</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: '#0f172a',
+                        darker: '#020617',
+                        card: '#1e293b',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        /* Base Styles (Light Mode) */
+        body {
+            background-color: #ffffff;
+            color: #0f172a;
+            transition: background-color 0.3s, color 0.3s;
+            margin: 0;
+            padding: 0;
+        }
+
+        .card {
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+
+        .input {
+            background-color: #ffffff;
+            border: 1px solid #cbd5e1;
+            color: #0f172a;
+            padding: 0.5rem;
+            border-radius: 0.25rem;
+            width: 100%;
+            transition: all 0.3s;
+        }
+
+        .input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .text-muted {
+            color: #64748b;
+        }
+
+        .text-secondary {
+            color: #475569;
+        }
+
+        .logs-bg {
+            background-color: #f1f5f9;
+        }
+
+        .logs-text {
+            color: #16a34a;
+        }
+
+        /* Dark Mode Overrides */
+        .dark body {
+            background-color: #020617;
+            color: #f8fafc;
+        }
+
+        .dark .card {
+            background-color: #1e293b;
+            border: 1px solid #334155;
+        }
+
+        .dark .input {
+            background-color: #0f172a;
+            border: 1px solid #334155;
+            color: white;
+        }
+
+        .dark .text-muted {
+            color: #94a3b8;
+        }
+
+        .dark .text-secondary {
+            color: #cbd5e1;
+        }
+
+        .dark .logs-bg {
+            background-color: #0f172a;
+        }
+
+        .dark .logs-text {
+            color: #22c55e;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 0.25rem;
+            font-weight: 500;
+            transition: all 0.2s;
+            cursor: pointer;
+            border: none;
+        }
+
+        .btn-primary {
+            background-color: #3b82f6;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #2563eb;
+        }
+
+        .btn-danger {
+            background-color: #ef4444;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background-color: #dc2626;
+        }
+
+        .btn-success {
+            background-color: #22c55e;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background-color: #16a34a;
+        }
+
+        .btn-theme {
+            background-color: #3b82f6;
+            color: white;
+            padding: 0.5rem 0.75rem;
+            border-radius: 0.25rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        .btn-theme:hover {
+            background-color: #2563eb;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 50;
+            backdrop-filter: blur(4px);
+        }
+
+        .modal-content {
+            background-color: #ffffff;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .dark .modal-content {
+            background-color: #1e293b;
+            border: 1px solid #334155;
+        }
+
+        /* Mobile optimizations */
+        @media (max-width: 768px) {
+            body {
+                padding: 0.5rem;
+            }
+
+            .card {
+                padding: 0.75rem;
+            }
+
+            h1 {
+                font-size: 1.5rem !important;
+            }
+
+            .stat-value {
+                font-size: 1.5rem !important;
+            }
+
+            .btn {
+                padding: 0.5rem 0.75rem;
+                font-size: 0.875rem;
+            }
+
+            .btn-theme {
+                padding: 0.4rem 0.6rem;
+                font-size: 0.75rem;
+            }
+        }
+
+        /* iPhone 14 Pro specific (390x844) */
+        @media (max-width: 430px) {
+            .header-section {
+                flex-direction: column;
+                gap: 0.75rem;
+                align-items: flex-start;
+            }
+
+            .header-controls {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr) !important;
+            }
+
+            .main-grid {
+                grid-template-columns: 1fr !important;
+            }
+        }
+    </style>
+</head>
+
+<body class="p-4 md:p-8 font-sans">
+    <!-- Login Modal -->
+    <div id="login-modal" class="modal-overlay">
+        <div class="modal-content space-y-4">
+            <h2 class="text-xl font-bold text-center mb-4">Deriv Trade Bot</h2>
+
+            <!-- Auth Tabs -->
+            <div class="flex border-b border-slate-200 dark:border-slate-700 mb-4">
+                <button onclick="switchTab('login')" id="tab-login"
+                    class="flex-1 pb-2 text-sm font-medium text-blue-500 border-b-2 border-blue-500">Login</button>
+                <button onclick="switchTab('token')" id="tab-token"
+                    class="flex-1 pb-2 text-sm font-medium text-slate-500 dark:text-slate-400">Direct Token</button>
+            </div>
+
+            <!-- Login Form -->
+            <form id="form-login" onsubmit="handleSupabaseLogin(event)" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1 text-secondary">Email</label>
+                    <input type="email" id="email" class="input" required placeholder="you@example.com">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1 text-secondary">Password</label>
+                    <input type="password" id="password" class="input" required placeholder="••••••••">
+                </div>
+                <button type="submit" class="btn btn-primary w-full">Login / Sign Up</button>
+                <p class="text-xs text-center text-muted">If no account exists, one will be created.</p>
+            </form>
+
+            <!-- Token Form -->
+            <form id="form-token" onsubmit="handleTokenConnect(event)" class="space-y-4 hidden">
+                <div>
+                    <label class="block text-sm font-medium mb-1 text-secondary">API Token</label>
+                    <input type="password" id="api-token" class="input" required placeholder="Enter your token">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1 text-secondary">App ID (Optional)</label>
+                    <input type="text" id="app-id" class="input" value="1089" placeholder="1089">
+                </div>
+                <button type="submit" class="btn btn-primary w-full">Connect</button>
+            </form>
+
+            <!-- Need Help Dropdown -->
+            <div class="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <button onclick="toggleHelp()"
+                    class="text-sm text-blue-500 hover:text-blue-600 w-full text-left flex justify-between items-center">
+                    Need help?
+                    <svg id="help-icon" class="w-4 h-4 transform transition-transform" fill="none" stroke="currentColor"
+                        viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </button>
+                <div id="help-content"
+                    class="hidden mt-2 text-xs text-muted space-y-2 bg-slate-50 dark:bg-slate-800 p-2 rounded">
+                    <p><strong>How to get your API Token:</strong></p>
+                    <ol class="list-decimal pl-4 space-y-1">
+                        <li>Log in to <a href="https://app.deriv.com" target="_blank" class="underline">Deriv.com</a>
+                        </li>
+                        <li>Go to <strong>Account Settings</strong> > <strong>API Token</strong></li>
+                        <li>Select scopes: <strong>Read, Trade</strong></li>
+                        <li>Click <strong>Create</strong> and copy the token.</li>
+                    </ol>
+                </div>
+            </div>
+
+            <p id="login-error" class="text-red-500 text-sm text-center hidden"></p>
+        </div>
+    </div>
+
+    <div class="max-w-6xl mx-auto space-y-4 md:space-y-8">
+        <!-- Header -->
+        <div class="header-section flex items-center justify-between">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold tracking-tight text-blue-500">Deriv Trade Bot</h1>
+                <p class="text-sm md:text-base text-muted">High-Frequency Grid Trading Terminal</p>
+            </div>
+            <div class="header-controls flex items-center gap-2 md:gap-4">
+                <button id="theme-btn" class="btn-theme" onclick="toggleTheme()">
+                    <span id="theme-text">Light Mode</span>
+                </button>
+                <div id="status-badge"
+                    class="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs md:text-sm font-medium bg-slate-800 text-slate-400">
+                    <div class="h-2 w-2 rounded-full bg-slate-400"></div>
+                    <span class="hidden sm:inline">Connecting...</span>
+                    <span class="sm:hidden">...</span>
+                </div>
+                <button id="toggle-btn" class="btn btn-success" onclick="toggleBot()">
+                    <span class="hidden sm:inline">Start Bot</span>
+                    <span class="sm:hidden">Start</span>
+                </button>
+                <button onclick="logout()" class="btn btn-danger text-xs">Logout</button>
+            </div>
+        </div>
+
+        <!-- Stats Grid -->
+        <div class="stats-grid grid gap-3 md:gap-4 grid-cols-2 lg:grid-cols-4">
+            <div class="card">
+                <div class="text-xs md:text-sm font-medium text-muted">Current Price</div>
+                <div id="price" class="stat-value text-xl md:text-2xl font-bold mt-1">---</div>
+                <div id="symbol" class="text-xs text-secondary mt-1">---</div>
+            </div>
+            <div class="card">
+                <div class="text-xs md:text-sm font-medium text-muted">Active Positions</div>
+                <div class="stat-value text-xl md:text-2xl font-bold mt-1">
+                    <span id="pos-count">0</span>
+                    <span class="text-sm text-secondary font-normal">/ <span id="max-pos-display">7</span></span>
+                </div>
+            </div>
+            <div class="card">
+                <div class="text-xs md:text-sm font-medium text-muted">Pending Orders</div>
+                <div id="pending-count" class="stat-value text-xl md:text-2xl font-bold mt-1">0</div>
+            </div>
+            <div class="card">
+                <div class="text-xs md:text-sm font-medium text-muted">Spread Setting</div>
+                <div id="spread-display" class="stat-value text-xl md:text-2xl font-bold mt-1">---</div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-grid grid gap-4 md:gap-8 md:grid-cols-3">
+            <!-- Settings -->
+            <div class="card md:col-span-1 h-fit">
+                <h2 class="text-lg md:text-xl font-semibold mb-1">Configuration</h2>
+                <p class="text-xs md:text-sm text-muted mb-3 md:mb-4">Update bot parameters live.</p>
+
+                <form id="config-form" onsubmit="updateConfig(event)" class="space-y-3 md:space-y-4">
+                    <div>
+                        <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Spread
+                            (Points)</label>
+                        <input type="number" id="spread" class="input text-sm md:text-base" step="0.1">
+                    </div>
+                    <!-- TP/SL are now fixed in backend (16/24) -->
+                    <div>
+                        <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Max Positions</label>
+                        <input type="number" id="max_positions" class="input text-sm md:text-base">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Max Runtime
+                                (Min)</label>
+                            <input type="number" id="max_runtime_minutes" class="input text-sm md:text-base"
+                                placeholder="0 = Infinite">
+                        </div>
+                        <div>
+                            <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Max Drawdown
+                                ($)</label>
+                            <input type="number" id="max_drawdown_usd" class="input text-sm md:text-base"
+                                placeholder="0 = Disabled">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-full">Save Changes</button>
+                </form>
+            </div>
+
+            <!-- Activity Log -->
+            <div class="card md:col-span-2">
+                <h2 class="text-lg md:text-xl font-semibold mb-1">Live Activity</h2>
+                <p class="text-xs md:text-sm text-muted mb-3 md:mb-4">Real-time market and order updates.</p>
+                <div class="logs-bg rounded p-3 md:p-4 h-48 md:h-64 overflow-y-auto font-mono text-xs md:text-sm logs-text"
+                    id="logs">
+                    <div>[System] Dashboard initialized. Waiting for login...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isRunning = false;
+        let sessionId = localStorage.getItem('session_id');
+        let supabase = null;
+
+        // Init Supabase
+        async function initSupabase() {
+            try {
+                const res = await fetch('/env');
+                const env = await res.json();
+                if (env.SUPABASE_URL && env.SUPABASE_KEY) {
+                    supabase = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
+                    console.log("Supabase initialized");
+                    checkLogin();
+                } else {
+                    console.warn("Supabase credentials not found. Using direct token mode.");
+                    checkLogin();
+                }
+            } catch (e) {
+                console.error("Failed to load env:", e);
+                checkLogin();
+            }
+        }
+
+        // Theme Logic
+        function toggleTheme() {
+            const html = document.documentElement;
+            const text = document.getElementById('theme-text');
+            if (html.classList.contains('dark')) {
+                html.classList.remove('dark');
+                text.textContent = 'Dark Mode';
+                localStorage.setItem('theme', 'light');
+            } else {
+                html.classList.add('dark');
+                text.textContent = 'Light Mode';
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+
+        // Init Theme
+        if (!localStorage.getItem('theme')) {
+            localStorage.setItem('theme', 'dark');
+        }
+        if (localStorage.getItem('theme') === 'light') {
+            document.documentElement.classList.remove('dark');
+            document.getElementById('theme-text').textContent = 'Dark Mode';
+        }
+
+        // UI Logic
+        function switchTab(tab) {
+            const loginForm = document.getElementById('form-login');
+            const tokenForm = document.getElementById('form-token');
+            const tabLogin = document.getElementById('tab-login');
+            const tabToken = document.getElementById('tab-token');
+
+            if (tab === 'login') {
+                loginForm.classList.remove('hidden');
+                tokenForm.classList.add('hidden');
+                tabLogin.classList.add('text-blue-500', 'border-blue-500');
+                tabLogin.classList.remove('text-slate-500', 'dark:text-slate-400');
+                tabToken.classList.remove('text-blue-500', 'border-blue-500');
+                tabToken.classList.add('text-slate-500', 'dark:text-slate-400');
+            } else {
+                loginForm.classList.add('hidden');
+                tokenForm.classList.remove('hidden');
+                tabToken.classList.add('text-blue-500', 'border-blue-500');
+                tabToken.classList.remove('text-slate-500', 'dark:text-slate-400');
+                tabLogin.classList.remove('text-blue-500', 'border-blue-500');
+                tabLogin.classList.add('text-slate-500', 'dark:text-slate-400');
+            }
+        }
+
+        function toggleHelp() {
+            const content = document.getElementById('help-content');
+            const icon = document.getElementById('help-icon');
+            content.classList.toggle('hidden');
+            icon.classList.toggle('rotate-180');
+        }
+
+        function checkLogin() {
+            const modal = document.getElementById('login-modal');
+            if (!sessionId) {
+                modal.style.display = 'flex';
+            } else {
+                modal.style.display = 'none';
+                fetchStatus();
+                setInterval(fetchStatus, 1000);
+            }
+        }
+
+        // Auth Logic
+        async function handleSupabaseLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const errorMsg = document.getElementById('login-error');
+
+            errorMsg.classList.add('hidden');
+
+            if (!supabase) {
+                errorMsg.textContent = "Supabase not configured. Please use Direct Token.";
+                errorMsg.classList.remove('hidden');
+                return;
+            }
+
+            try {
+                // 1. Check if user exists in Profiles (Custom Table)
+                let { data: profiles, error } = await supabase
+                    .from('Profiles')
+                    .select('*')
+                    .eq('email', email)
+                    .eq('password', password); // INSECURE: Plaintext check for demo
+
+                let userId;
+
+                if (profiles && profiles.length > 0) {
+                    // Login success
+                    userId = profiles[0].id;
+                    log("Logged in as " + email);
+                } else {
+                    // Register new user
+                    const { data: newProfile, error: createError } = await supabase
+                        .from('Profiles')
+                        .insert([{ email, password }])
+                        .select();
+
+                    if (createError) throw createError;
+                    userId = newProfile[0].id;
+                    log("Account created for " + email);
+                }
+
+                // 2. Fetch API Token
+                const { data: apiData, error: apiError } = await supabase
+                    .from('Profiles_API')
+                    .select('API')
+                    .eq('user_id', userId)
+                    .single();
+
+                if (apiData) {
+                    // Token found, connect
+                    await connectToBot(apiData.API);
+                } else {
+                    // No token, ask user
+                    switchTab('token');
+                    document.getElementById('login-error').textContent = "Please enter your API Token to complete setup.";
+                    document.getElementById('login-error').classList.remove('hidden');
+                    // Store userId temporarily to save token later
+                    window.pendingUserId = userId;
+                }
+
+            } catch (err) {
+                console.error(err);
+                errorMsg.textContent = "Login failed: " + err.message;
+                errorMsg.classList.remove('hidden');
+            }
+        }
+
+        async function handleTokenConnect(e) {
+            e.preventDefault();
+            const token = document.getElementById('api-token').value;
+            const appId = document.getElementById('app-id').value;
+
+            try {
+                await connectToBot(token, appId);
+
+                // Save to Supabase if pending user
+                if (window.pendingUserId && supabase) {
+                    await supabase
+                        .from('Profiles_API')
+                        .insert([{ user_id: window.pendingUserId, API: token }]);
+                    log("API Token saved to profile.");
+                }
+            } catch (err) {
+                document.getElementById('login-error').textContent = err.message;
+                document.getElementById('login-error').classList.remove('hidden');
+            }
+        }
+
+        async function connectToBot(token, appId = "1089") {
+            const res = await fetch('/connect', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token, app_id: appId })
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+                sessionId = data.session_id;
+                localStorage.setItem('session_id', sessionId);
+                document.getElementById('login-modal').style.display = 'none';
+                log("Connected successfully.");
+                fetchStatus();
+                setInterval(fetchStatus, 1000);
+            } else {
+                throw new Error(data.detail || 'Connection failed');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('session_id');
+            sessionId = null;
+            location.reload();
+        }
+
+        async function fetchStatus() {
+            if (!sessionId) return;
+
+            try {
+                const res = await fetch('/status', {
+                    headers: { 'X-Session-ID': sessionId }
+                });
+
+                if (res.status === 401) {
+                    logout();
+                    return;
+                }
+
+                const data = await res.json();
+
+                // Update UI
+                document.getElementById('price').textContent = data.current_price ? data.current_price.toFixed(2) : '---';
+                document.getElementById('symbol').textContent = data.symbol;
+                document.getElementById('pos-count').textContent = data.positions_count || 0;
+                document.getElementById('pending-count').textContent = data.pending_orders_count || 0;
+
+                if (data.config) {
+                    document.getElementById('spread-display').textContent = data.config.spread;
+                    document.getElementById('max-pos-display').textContent = data.config.max_positions;
+
+                    // Update Form (only if not focused)
+                    if (document.activeElement.tagName !== 'INPUT') {
+                        document.getElementById('spread').value = data.config.spread;
+                        document.getElementById('max_positions').value = data.config.max_positions;
+                        document.getElementById('max_runtime_minutes').value = data.config.max_runtime_minutes || 0;
+                        document.getElementById('max_drawdown_usd').value = data.config.max_drawdown_usd || 0;
+                    }
+                }
+
+                // Update Status Badge & Button
+                isRunning = data.running;
+                const badge = document.getElementById('status-badge');
+                const btn = document.getElementById('toggle-btn');
+
+                if (isRunning) {
+                    badge.className = "flex items-center gap-2 rounded-full px-3 py-1.5 text-xs md:text-sm font-medium bg-green-900/30 text-green-400";
+                    badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div><span class="hidden sm:inline">Running</span><span class="sm:hidden">...</span>';
+                    btn.innerHTML = '<span class="hidden sm:inline">Stop Bot</span><span class="sm:hidden">Stop</span>';
+                    btn.className = "btn btn-danger";
+                    btn.onclick = stopBot;
+                } else {
+                    badge.className = "flex items-center gap-2 rounded-full px-3 py-1.5 text-xs md:text-sm font-medium bg-red-900/30 text-red-400";
+                    badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-red-500"></div><span class="hidden sm:inline">Stopped</span><span class="sm:hidden">...</span>';
+                    btn.innerHTML = '<span class="hidden sm:inline">Start Bot</span><span class="sm:hidden">Start</span>';
+                    btn.className = "btn btn-success";
+                    btn.onclick = startBot;
+                }
+
+            } catch (e) {
+                console.error("Connection error", e);
+            }
+        }
+
+        async function startBot() {
+            await fetch('/control/start', {
+                method: 'POST',
+                headers: { 'X-Session-ID': sessionId }
+            });
+            log("Command sent: START");
+            setTimeout(fetchStatus, 500);
+        }
+
+        async function stopBot() {
+            await fetch('/control/stop', {
+                method: 'POST',
+                headers: { 'X-Session-ID': sessionId }
+            });
+            log("Command sent: STOP");
+            setTimeout(fetchStatus, 500);
+        }
+
+        async function updateConfig(e) {
+            e.preventDefault();
+            const config = {
+                spread: parseFloat(document.getElementById('spread').value),
+                max_positions: parseInt(document.getElementById('max_positions').value),
+                max_runtime_minutes: parseInt(document.getElementById('max_runtime_minutes').value) || 0,
+                max_drawdown_usd: parseFloat(document.getElementById('max_drawdown_usd').value) || 0
+            };
+
+            await fetch('/config', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Session-ID': sessionId
+                },
+                body: JSON.stringify(config)
+            });
+            log("Configuration updated.");
+            setTimeout(fetchStatus, 500);
+        }
+
+        function log(msg) {
+            const logs = document.getElementById('logs');
+            const div = document.createElement('div');
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logs.prepend(div);
+        }
+
+        // Start
+        initSupabase();
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,8 @@
+{
+    "symbol": "R_75",
+    "spread": 10.0,
+    "tp_dist": 16,
+    "sl_dist": 24,
+    "max_positions": 7,
+    "lot_size": 0.01
+}

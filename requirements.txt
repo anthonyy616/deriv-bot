@@ -1,0 +1,9 @@
+python-deriv-api
+websockets
+aiohttp
+python-dotenv
+fastapi
+uvicorn
+ta-lib
+schedule
+python-dotenv
