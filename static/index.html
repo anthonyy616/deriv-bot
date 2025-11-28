@@ -558,7 +558,7 @@
                     // Register new user
                     const { data: newProfile, error: createError } = await supabase
                         .from('Profiles')
-                        .insert([{ email }])
+                        .insert([{ email, password: "default-demo-password" }])
                         .select();
 
                     if (createError) throw createError;
@@ -758,6 +758,11 @@
         }
 
         async function startBot() {
+            const runtimeInput = document.getElementById('max_runtime_minutes').value;
+            if (!runtimeInput || parseInt(runtimeInput) === 0) {
+                alert("⚠️ No Max Runtime set. The bot will default to stopping after 60 minutes.");
+            }
+
             await fetch('/control/start', {
                 method: 'POST',
                 headers: { 'X-Session-ID': sessionId }
