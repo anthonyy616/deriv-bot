@@ -15,7 +15,7 @@ class ConfigManager:
             "tp_dist": 16,
             "sl_dist": 24,
             "max_positions": 7,
-            "lot_size": 0.01,
+            "lot_size": 10,  # $10 stake per trade
             "max_runtime_minutes": 0,  # 0 = Infinite
             "max_drawdown_usd": 0      # 0 = Disabled
         }

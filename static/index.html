@@ -262,16 +262,17 @@
                     <label class="block text-sm font-medium mb-1 text-secondary">Email</label>
                     <input type="email" id="email" class="input" required placeholder="you@example.com">
                 </div>
-                <div>
-                    <label class="block text-sm font-medium mb-1 text-secondary">Password</label>
-                    <input type="password" id="password" class="input" required placeholder="••••••••">
-                </div>
+                <!-- Password Field Removed as per request -->
                 <button type="submit" class="btn btn-primary w-full">Login / Sign Up</button>
                 <p class="text-xs text-center text-muted">If no account exists, one will be created.</p>
             </form>
 
             <!-- Token Form -->
             <form id="form-token" onsubmit="handleTokenConnect(event)" class="space-y-4 hidden">
+                <div>
+                    <label class="block text-sm font-medium mb-1 text-secondary">Email</label>
+                    <input type="email" id="token-email" class="input" required placeholder="you@example.com">
+                </div>
                 <div>
                     <label class="block text-sm font-medium mb-1 text-secondary">API Token</label>
                     <input type="password" id="api-token" class="input" required placeholder="Enter your token">
@@ -280,7 +281,7 @@
                     <label class="block text-sm font-medium mb-1 text-secondary">App ID (Optional)</label>
                     <input type="text" id="app-id" class="input" value="1089" placeholder="1089">
                 </div>
-                <button type="submit" class="btn btn-primary w-full">Connect</button>
+                <button type="submit" class="btn btn-primary w-full">Connect & Save</button>
             </form>
 
             <!-- Need Help Dropdown -->
@@ -299,6 +300,7 @@
                     <ol class="list-decimal pl-4 space-y-1">
                         <li>Log in to <a href="https://app.deriv.com" target="_blank" class="underline">Deriv.com</a>
                         </li>
+                        <li><strong>Switch to the account (Demo or Real) you want to use.</strong></li>
                         <li>Go to <strong>Account Settings</strong> > <strong>API Token</strong></li>
                         <li>Select scopes: <strong>Read, Trade</strong></li>
                         <li>Click <strong>Create</strong> and copy the token.</li>
@@ -318,6 +320,12 @@
                 <p class="text-sm md:text-base text-muted">High-Frequency Grid Trading Terminal</p>
             </div>
             <div class="header-controls flex items-center gap-2 md:gap-4">
+                <!-- Account Info -->
+                <div id="account-info" class="hidden md:flex flex-col items-end text-right mr-2">
+                    <span id="acc-loginid" class="text-xs font-bold text-slate-700 dark:text-slate-300">---</span>
+                    <span id="acc-currency" class="text-[10px] text-muted">USD</span>
+                </div>
+
                 <button id="theme-btn" class="btn-theme" onclick="toggleTheme()">
                     <span id="theme-text">Light Mode</span>
                 </button>
@@ -331,7 +339,25 @@
                     <span class="hidden sm:inline">Start Bot</span>
                     <span class="sm:hidden">Start</span>
                 </button>
-                <button onclick="logout()" class="btn btn-danger text-xs">Logout</button>
+
+                <!-- User Menu -->
+                <div class="relative group">
+                    <button class="btn btn-danger text-xs flex items-center gap-1">
+                        <span class="hidden sm:inline">Account</span>
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7">
+                            </path>
+                        </svg>
+                    </button>
+                    <div
+                        class="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-800 rounded-md shadow-lg py-1 hidden group-hover:block border border-slate-200 dark:border-slate-700 z-50">
+                        <a href="#" onclick="logout()"
+                            class="block px-4 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700">Switch
+                            Account</a>
+                        <a href="#" onclick="logout()"
+                            class="block px-4 py-2 text-sm text-red-500 hover:bg-slate-100 dark:hover:bg-slate-700">Logout</a>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -372,10 +398,13 @@
                             (Points)</label>
                         <input type="number" id="spread" class="input text-sm md:text-base" step="0.1">
                     </div>
-                    <!-- TP/SL are now fixed in backend (16/24) -->
                     <div>
                         <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Max Positions</label>
                         <input type="number" id="max_positions" class="input text-sm md:text-base">
+                    </div>
+                    <div>
+                        <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Lot Size ($)</label>
+                        <input type="number" id="lot_size" class="input text-sm md:text-base" step="1" placeholder="10">
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                         <div>
@@ -501,7 +530,7 @@
         async function handleSupabaseLogin(e) {
             e.preventDefault();
             const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
+            // Password field removed
             const errorMsg = document.getElementById('login-error');
 
             errorMsg.classList.add('hidden');
@@ -518,7 +547,6 @@
                     .from('Profiles')
                     .select('*')
                     .eq('email', email)
-                    .eq('password', password); // INSECURE: Plaintext check for demo
 
                 let userId;
 
@@ -530,7 +558,7 @@
                     // Register new user
                     const { data: newProfile, error: createError } = await supabase
                         .from('Profiles')
-                        .insert([{ email, password }])
+                        .insert([{ email }])
                         .select();
 
                     if (createError) throw createError;
@@ -551,6 +579,7 @@
                 } else {
                     // No token, ask user
                     switchTab('token');
+                    document.getElementById('token-email').value = email; // Pre-fill
                     document.getElementById('login-error').textContent = "Please enter your API Token to complete setup.";
                     document.getElementById('login-error').classList.remove('hidden');
                     // Store userId temporarily to save token later
@@ -568,6 +597,9 @@
             e.preventDefault();
             const token = document.getElementById('api-token').value;
             const appId = document.getElementById('app-id').value;
+            const errorMsg = document.getElementById('login-error');
+
+            errorMsg.classList.add('hidden');
 
             try {
                 await connectToBot(token, appId);
@@ -580,36 +612,70 @@
                     log("API Token saved to profile.");
                 }
             } catch (err) {
-                document.getElementById('login-error').textContent = err.message;
-                document.getElementById('login-error').classList.remove('hidden');
+                errorMsg.textContent = err.message;
+                errorMsg.classList.remove('hidden');
             }
         }
 
         async function connectToBot(token, appId = "1089") {
-            const res = await fetch('/connect', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token, app_id: appId })
-            });
+            try {
+                const res = await fetch('/connect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, app_id: appId })
+                });
 
-            const data = await res.json();
+                const text = await res.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    throw new Error("Server response error: " + text.substring(0, 100));
+                }
 
-            if (res.ok) {
-                sessionId = data.session_id;
-                localStorage.setItem('session_id', sessionId);
-                document.getElementById('login-modal').style.display = 'none';
-                log("Connected successfully.");
-                fetchStatus();
-                setInterval(fetchStatus, 1000);
-            } else {
-                throw new Error(data.detail || 'Connection failed');
+                if (res.ok) {
+                    sessionId = data.session_id;
+                    localStorage.setItem('session_id', sessionId);
+                    document.getElementById('login-modal').style.display = 'none';
+                    log("Connected successfully.");
+                    fetchStatus();
+                    setInterval(fetchStatus, 1000);
+                } else {
+                    throw new Error(data.detail || 'Connection failed');
+                }
+            } catch (error) {
+                console.error("Connect error:", error);
+                throw error;
             }
         }
 
         function logout() {
+            // Soft Logout
             localStorage.removeItem('session_id');
             sessionId = null;
-            location.reload();
+
+            // Reset UI
+            document.getElementById('login-modal').style.display = 'flex';
+            document.getElementById('price').textContent = '---';
+            document.getElementById('pos-count').textContent = '0';
+            document.getElementById('pending-count').textContent = '0';
+            document.getElementById('spread-display').textContent = '---';
+
+            // Reset Badge
+            const badge = document.getElementById('status-badge');
+            badge.className = "flex items-center gap-2 rounded-full px-3 py-1.5 text-xs md:text-sm font-medium bg-slate-800 text-slate-400";
+            badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-slate-400"></div><span class="hidden sm:inline">Connecting...</span><span class="sm:hidden">...</span>';
+
+            // Reset Button
+            const btn = document.getElementById('toggle-btn');
+            btn.innerHTML = '<span class="hidden sm:inline">Start Bot</span><span class="sm:hidden">Start</span>';
+            btn.className = "btn btn-success";
+            btn.onclick = toggleBot;
+
+            // Hide account info
+            document.getElementById('account-info').classList.add('hidden');
+
+            log("Logged out.");
         }
 
         async function fetchStatus() {
@@ -625,7 +691,14 @@
                     return;
                 }
 
-                const data = await res.json();
+                const text = await res.text();
+                let data;
+                try {
+                    data = JSON.parse(text);
+                } catch (e) {
+                    console.error("Invalid JSON from status:", text);
+                    return;
+                }
 
                 // Update UI
                 document.getElementById('price').textContent = data.current_price ? data.current_price.toFixed(2) : '---';
@@ -641,9 +714,18 @@
                     if (document.activeElement.tagName !== 'INPUT') {
                         document.getElementById('spread').value = data.config.spread;
                         document.getElementById('max_positions').value = data.config.max_positions;
+                        document.getElementById('lot_size').value = data.config.lot_size || 10;
                         document.getElementById('max_runtime_minutes').value = data.config.max_runtime_minutes || 0;
                         document.getElementById('max_drawdown_usd').value = data.config.max_drawdown_usd || 0;
                     }
+                }
+
+                // Update Account Info
+                if (data.account) {
+                    const accInfo = document.getElementById('account-info');
+                    accInfo.classList.remove('hidden');
+                    document.getElementById('acc-loginid').textContent = data.account.loginid;
+                    document.getElementById('acc-currency').textContent = data.account.currency;
                 }
 
                 // Update Status Badge & Button
@@ -670,6 +752,11 @@
             }
         }
 
+        function toggleBot() {
+            if (isRunning) stopBot();
+            else startBot();
+        }
+
         async function startBot() {
             await fetch('/control/start', {
                 method: 'POST',
@@ -693,6 +780,7 @@
             const config = {
                 spread: parseFloat(document.getElementById('spread').value),
                 max_positions: parseInt(document.getElementById('max_positions').value),
+                lot_size: parseFloat(document.getElementById('lot_size').value),
                 max_runtime_minutes: parseInt(document.getElementById('max_runtime_minutes').value) || 0,
                 max_drawdown_usd: parseFloat(document.getElementById('max_drawdown_usd').value) || 0
             };
