@@ -254,12 +254,11 @@ class GridStrategy:
         for position in self.positions[:]:
             try:
                 if position.get('is_mt5'):
-                    # TODO: Implement MT5 position check. 
-                    # For now, we assume it's open or we need a way to check 'mt5_get_positions'.
-                    # If we can't check, the bot might get stuck in 'waiting_close'.
-                    # We could implement a simple timeout or just log.
-                    # For this task, we'll leave it as is but prevent the 'get_contract_status' call which would fail.
-                    pass
+                    # Check MT5 position status
+                    status = self.client.check_mt5_position_status(position['contract_id'])
+                    if status and not status['is_open']:
+                        print(f"🔴 MT5 Position CLOSED: {position['type']} | P/L: ${status['profit']:.2f}")
+                        self.positions.remove(position)
                 else:
                     status = await self.client.get_contract_status(position['contract_id'], login=self.mt5_login)
                     if status and status.get('is_sold') == 1:

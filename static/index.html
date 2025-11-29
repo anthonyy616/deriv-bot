@@ -825,7 +825,8 @@
                     }, 1000); // Wait for fetchStatus to potentially fill it first
 
                 } else {
-                    select.innerHTML = '<option>No MT5 Accounts</option>';
+                    select.innerHTML = '<option>No Synthetic MT5 Accounts Found</option>';
+                    log("⚠️ No Synthetic MT5 accounts found. Binary trading requires a Derived/Synthetic MT5 account (e.g., for R_75, Boom, Crash).");
                 }
 
                 // Trigger status fetch to see if we have a selected login

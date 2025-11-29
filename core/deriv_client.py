@@ -2,6 +2,7 @@ import asyncio
 import os
 from deriv_api import DerivAPI
 from dotenv import load_dotenv
+import MetaTrader5 as mt5
 
 load_dotenv()
 
@@ -10,6 +11,14 @@ class DerivClient:
         self.app_id = app_id
         self.api_token = api_token
         self.api = None
+        self.account_info = None
+
+    def initialize_mt5(self):
+        """Initialize connection to local MT5 terminal"""
+        if not mt5.initialize():
+            print("initialize() failed, error code =", mt5.last_error())
+            return False
+        return True
 
     async def connect(self):
         if not self.app_id or not self.api_token:
@@ -32,6 +41,9 @@ class DerivClient:
             
             # Start Keep-Alive Loop
             asyncio.create_task(self._keep_alive())
+            
+            # Initialize MT5
+            self.initialize_mt5()
             
             return self.api
         except Exception as e:
@@ -238,43 +250,87 @@ class DerivClient:
 
     async def buy_mt5_order(self, login, action, volume, symbol, stop_loss=None, take_profit=None):
         """
-        Places a market order on an MT5 account.
+        Places a market order on an MT5 account using the MetaTrader5 library.
         action: "buy" or "sell"
         volume: lots (e.g. 0.01)
         """
         try:
-            req = {
-                "mt5_new_order": 1,
-                "login": login,
-                "type": action,
-                "volume": volume,
-                "symbol": symbol,
-            }
-            print(f"Sending MT5 Order: {req}")
-            
-            if stop_loss:
-                req["stop_loss"] = stop_loss
-            if take_profit:
-                req["take_profit"] = take_profit
-            
-            response = await self.api.send(req)
-            
-            if 'error' in response:
-                print(f"MT5 Order Error: {response['error']['message']}")
+            # Ensure initialized
+            if not self.initialize_mt5():
                 return None
                 
-            print(f"MT5 Order Executed! ID: {response.get('mt5_new_order', {}).get('order_id')}")
-            return response.get('mt5_new_order')
+            # Check if login matches
+            account_info = mt5.account_info()
+            if not account_info:
+                print("Failed to get MT5 account info")
+                return None
+                
+            if str(account_info.login) != str(login):
+                print(f"⚠️ MT5 Terminal Mismatch! Logged in as {account_info.login}, but bot target is {login}.")
+                print("Please switch accounts in your MT5 Terminal to match the selected account.")
+                return None
+
+            # Prepare request
+            mt5_action = mt5.ORDER_TYPE_BUY if action == "buy" else mt5.ORDER_TYPE_SELL
+            
+            # Get current price
+            tick = mt5.symbol_info_tick(symbol)
+            if not tick:
+                print(f"Failed to get tick for {symbol}. Is it in Market Watch?")
+                return None
+                
+            price = tick.ask if action == "buy" else tick.bid
+            
+            request = {
+                "action": mt5.TRADE_ACTION_DEAL,
+                "symbol": symbol,
+                "volume": float(volume),
+                "type": mt5_action,
+                "price": price,
+                "deviation": 20,
+                "magic": 234000,
+                "comment": "Deriv Bot",
+                "type_time": mt5.ORDER_TIME_GTC,
+                "type_filling": mt5.ORDER_FILLING_IOC,
+            }
+            
+            if stop_loss:
+                request["sl"] = float(stop_loss)
+            if take_profit:
+                request["tp"] = float(take_profit)
+            
+            print(f"Sending MT5 Order: {request}")
+            result = mt5.order_send(request)
+            
+            if result.retcode != mt5.TRADE_RETCODE_DONE:
+                print("Order send failed, retcode={}: {}".format(result.retcode, result.comment))
+                return None
+                
+            print(f"MT5 Order Executed! Ticket: {result.order}")
+            return {'order_id': result.order, 'price': result.price}
             
         except Exception as e:
             print(f"Exception during buy_mt5_order: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
-    async def get_mt5_position(self, login, position_id):
-        # Placeholder: The API might not have a direct "get single position" for MT5.
-        # We might need to fetch all open positions and find it.
-        pass
+    def check_mt5_position_status(self, ticket):
+        """Check if an MT5 position is still open"""
+        if not self.initialize_mt5():
+            return None
+            
+        positions = mt5.positions_get(ticket=ticket)
+        if positions is None:
+            # Could be connection error
+            return None
+            
+        if len(positions) > 0:
+            return {'is_open': True, 'profit': positions[0].profit}
+            
+        return {'is_open': False, 'profit': 0.0}
 
     async def disconnect(self):
         if self.api:
             await self.api.disconnect()
+        mt5.shutdown()

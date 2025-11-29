@@ -1,10 +1,9 @@
 python-deriv-api
-websockets
+websockets==10.3
 aiohttp
 python-dotenv
 fastapi
 uvicorn
 ta-lib
 schedule
-python-dotenv
-supabase
+MetaTrader5
