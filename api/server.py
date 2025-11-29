@@ -43,6 +43,7 @@ class ConnectRequest(BaseModel):
     app_id: str
 
 class ConfigUpdate(BaseModel):
+    symbol: str | None = None
     spread: float | None = None
     tp_dist: float | None = None
     sl_dist: float | None = None

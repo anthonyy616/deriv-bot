@@ -366,7 +366,7 @@
             <div class="card">
                 <div class="text-xs md:text-sm font-medium text-muted">Current Price</div>
                 <div id="price" class="stat-value text-xl md:text-2xl font-bold mt-1">---</div>
-                <div id="symbol" class="text-xs text-secondary mt-1">---</div>
+                <div id="symbol-display" class="text-xs text-secondary mt-1">---</div>
             </div>
             <div class="card">
                 <div class="text-xs md:text-sm font-medium text-muted">Active Positions</div>
@@ -393,6 +393,16 @@
                 <p class="text-xs md:text-sm text-muted mb-3 md:mb-4">Update bot parameters live.</p>
 
                 <form id="config-form" onsubmit="updateConfig(event)" class="space-y-3 md:space-y-4">
+                    <div>
+                        <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Asset</label>
+                        <select id="symbol" class="input text-sm md:text-base">
+                            <option value="R_10">Volatility 10</option>
+                            <option value="R_25">Volatility 25</option>
+                            <option value="R_50">Volatility 50</option>
+                            <option value="R_75">Volatility 75</option>
+                            <option value="R_100">Volatility 100</option>
+                        </select>
+                    </div>
                     <div>
                         <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Spread
                             (Points)</label>
@@ -660,6 +670,7 @@
             document.getElementById('pos-count').textContent = '0';
             document.getElementById('pending-count').textContent = '0';
             document.getElementById('spread-display').textContent = '---';
+            document.getElementById('symbol-display').textContent = '---';
 
             // Reset Badge
             const badge = document.getElementById('status-badge');
@@ -701,8 +712,15 @@
                 }
 
                 // Update UI
+                const symbolMap = {
+                    'R_10': 'Volatility 10',
+                    'R_25': 'Volatility 25',
+                    'R_50': 'Volatility 50',
+                    'R_75': 'Volatility 75',
+                    'R_100': 'Volatility 100'
+                };
                 document.getElementById('price').textContent = data.current_price ? data.current_price.toFixed(2) : '---';
-                document.getElementById('symbol').textContent = data.symbol;
+                document.getElementById('symbol-display').textContent = symbolMap[data.symbol] || data.symbol;
                 document.getElementById('pos-count').textContent = data.positions_count || 0;
                 document.getElementById('pending-count').textContent = data.pending_orders_count || 0;
 
@@ -711,7 +729,8 @@
                     document.getElementById('max-pos-display').textContent = data.config.max_positions;
 
                     // Update Form (only if not focused)
-                    if (document.activeElement.tagName !== 'INPUT') {
+                    if (document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'SELECT') {
+                        document.getElementById('symbol').value = data.config.symbol || 'R_75';
                         document.getElementById('spread').value = data.config.spread;
                         document.getElementById('max_positions').value = data.config.max_positions;
                         document.getElementById('lot_size').value = data.config.lot_size || 10;
@@ -783,6 +802,7 @@
         async function updateConfig(e) {
             e.preventDefault();
             const config = {
+                symbol: document.getElementById('symbol').value,
                 spread: parseFloat(document.getElementById('spread').value),
                 max_positions: parseInt(document.getElementById('max_positions').value),
                 lot_size: parseFloat(document.getElementById('lot_size').value),

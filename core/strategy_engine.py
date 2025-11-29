@@ -4,10 +4,10 @@ from typing import Dict, List, Optional
 from core.deriv_client import DerivClient
 
 class GridStrategy:
-    def __init__(self, client: DerivClient, config_manager, symbol="R_75"):
+    def __init__(self, client: DerivClient, config_manager, symbol=None):
         self.client = client
         self.config_manager = config_manager
-        self.symbol = symbol
+        self.symbol = config_manager.get_config().get('symbol', 'R_75')
         self.cmp = None
         self.pending_orders = []  # Orders waiting to trigger
         self.positions = []  # Active positions (open contracts)
@@ -23,6 +23,7 @@ class GridStrategy:
         self.running = True
         self.start_time = time.time()
         self.iteration = 0
+        self.symbol = self.config.get('symbol', 'R_75')
         
         # Default Runtime Logic
         if self.config.get('max_runtime_minutes', 0) == 0:
