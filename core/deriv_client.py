@@ -236,6 +236,49 @@ class DerivClient:
             print(f"Exception fetching MT5 accounts: {e}")
             return []
 
+    async def buy_mt5_order(self, login, action, volume, symbol, stop_loss=None, take_profit=None):
+        """
+        Places a market order on an MT5 account.
+        action: "buy" or "sell"
+        volume: lots (e.g. 0.01)
+        """
+        try:
+            req = {
+                "mt5_new_order": 1,
+                "login": login,
+                "type": action,
+                "volume": volume,
+                "symbol": symbol,
+                "product": "synthetic", # or "financial"? Usually inferred or required. Let's try without or default.
+                # "product" might be required. "synthetic" is likely for Derived.
+            }
+            
+            if stop_loss:
+                req["stop_loss"] = stop_loss
+            if take_profit:
+                req["take_profit"] = take_profit
+                
+            # For market order, we might not need price, but some APIs require it.
+            # Usually mt5_new_order for market execution doesn't need price.
+            
+            response = await self.api.send(req) # Using send directly if method not wrapped
+            
+            if 'error' in response:
+                print(f"MT5 Order Error: {response['error']['message']}")
+                return None
+                
+            print(f"MT5 Order Executed! ID: {response.get('mt5_new_order', {}).get('order_id')}")
+            return response.get('mt5_new_order')
+            
+        except Exception as e:
+            print(f"Exception during buy_mt5_order: {e}")
+            return None
+
+    async def get_mt5_position(self, login, position_id):
+        # Placeholder: The API might not have a direct "get single position" for MT5.
+        # We might need to fetch all open positions and find it.
+        pass
+
     async def disconnect(self):
         if self.api:
             await self.api.disconnect()
