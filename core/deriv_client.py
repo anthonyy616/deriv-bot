@@ -110,6 +110,7 @@ class DerivClient:
         multiplier: leverage multiplier (e.g., 10, 25, 50)
         """
         try:
+            # 1. Get Proposal (Clean, no TP/SL to avoid validation errors on proposal)
             proposal_req = {
                 "proposal": 1,
                 "amount": amount,
@@ -117,9 +118,7 @@ class DerivClient:
                 "contract_type": contract_type,
                 "currency": "USD",
                 "symbol": symbol,
-                "multiplier": str(multiplier),
-                "stop_loss": str(stop_loss),
-                "take_profit": str(take_profit)
+                "multiplier": str(multiplier)
             }
             
             proposal = await self.api.proposal(proposal_req)
@@ -129,9 +128,44 @@ class DerivClient:
                 return None
 
             proposal_id = proposal['proposal']['id']
+            ask_price = proposal['proposal']['ask_price']
             
-            # Buy the contract
-            buy = await self.api.buy({"buy": proposal_id, "price": proposal['proposal']['ask_price']})
+            # 2. Calculate TP/SL Amounts (Required by Deriv API for Multipliers)
+            # Formula: Profit = (Price_Diff / Entry_Price) * Stake * Multiplier
+            
+            amount = float(amount)
+            multiplier = float(multiplier)
+            ask_price = float(ask_price)
+            stop_loss = float(stop_loss)
+            take_profit = float(take_profit)
+
+            tp_diff = abs(take_profit - ask_price)
+            sl_diff = abs(stop_loss - ask_price)
+            
+            tp_amount = (tp_diff / ask_price) * amount * multiplier
+            sl_amount = (sl_diff / ask_price) * amount * multiplier
+            
+            # Round to 2 decimals (Currency requirement)
+            tp_amount = round(tp_amount, 2)
+            sl_amount = round(sl_amount, 2)
+            
+            # Ensure minimum values (e.g. 0.01)
+            tp_amount = max(0.01, tp_amount)
+            sl_amount = max(0.01, sl_amount)
+            
+            print(f"Calculated TP: ${tp_amount}, SL: ${sl_amount} (Price: {ask_price})")
+
+            # 3. Buy with limit_order
+            buy_req = {
+                "buy": proposal_id,
+                "price": ask_price,
+                "limit_order": {
+                    "take_profit": tp_amount,
+                    "stop_loss": sl_amount
+                }
+            }
+            
+            buy = await self.api.buy(buy_req)
             
             if 'error' in buy:
                 print(f"Multiplier Buy Error: {buy['error']['message']}")
@@ -142,6 +176,8 @@ class DerivClient:
 
         except Exception as e:
             print(f"Exception during buy_multiplier: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     async def get_contract_status(self, contract_id):
