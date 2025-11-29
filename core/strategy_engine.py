@@ -95,13 +95,16 @@ class GridStrategy:
                     await self.place_initial_grid(self.cmp)
 
     async def on_tick_callback(self, tick):
-        if 'tick' in tick:
-            price = tick['tick']['quote']
-            self.cmp = price
-            
-            # Only process trading logic if running
-            if self.running:
-                await self.process_strategy(price)
+        try:
+            if 'tick' in tick:
+                price = tick['tick']['quote']
+                self.cmp = price
+                
+                # Only process trading logic if running
+                if self.running:
+                    await self.process_strategy(price)
+        except Exception as e:
+            print(f"Error in on_tick_callback: {e}")
 
     async def process_strategy(self, price):
         # STAGE 1: Place initial grid if idle
@@ -112,23 +115,22 @@ class GridStrategy:
 
         # STAGE 2: Check pending orders for triggers
         if self.iteration_state == "building":
-            for order in self.pending_orders[:]:
-                triggered = False
+            triggered_order = None
+            
+            # Check for triggers (Synchronous check)
+            for order in self.pending_orders:
+                if (order['type'] == 'BUY_STOP' and price >= order['price']) or \
+                   (order['type'] == 'SELL_STOP' and price <= order['price']):
+                    triggered_order = order
+                    break
+            
+            if triggered_order:
+                # 1. Remove ALL pending orders immediately to prevent double triggers
+                self.pending_orders.clear()
                 
-                if order['type'] == 'BUY_STOP' and price >= order['price']:
-                    triggered = True
-                elif order['type'] == 'SELL_STOP' and price <= order['price']:
-                    triggered = True
-                
-                if triggered:
-                    await self.execute_order(order, price)
-                    
-                    # Check if max positions reached
-                    if len(self.positions) >= self.config['max_positions']:
-                        print(f"📊 Max positions ({self.config['max_positions']}) reached. Waiting for closes...")
-                        self.pending_orders.clear()  # Cancel all pending
-                        self.iteration_state = "waiting_close"
-                        break
+                # 2. Execute the trade (Async)
+                print(f"⚡ Triggered {triggered_order['type']} at {price:.2f}")
+                await self.execute_trade_logic(triggered_order, price)
 
     async def place_initial_grid(self, price):
         """PHASE 1: Place BUY_STOP and SELL_STOP at current_price ± spread"""
@@ -154,18 +156,10 @@ class GridStrategy:
         }
         
         self.pending_orders = [buy_stop, sell_stop]
-        print(f" Iteration {self.iteration + 1} STARTED: Placed BUY_STOP at {buy_stop_price:.2f} | SELL_STOP at {sell_stop_price:.2f}")
+        print(f"🎯 Iteration {self.iteration + 1} STARTED: Placed BUY_STOP at {buy_stop_price:.2f} | SELL_STOP at {sell_stop_price:.2f}")
 
-    async def execute_order(self, order, current_price):
-        """Execute the triggered order and place NEW BRACKET around the filled price"""
-        print(f" Executing {order['type']} at {current_price:.2f}")
-        
-        # Remove from pending
-        self.pending_orders.remove(order)
-        
-        # Cancel opposite pending order (The one that wasn't hit)
-        opposite_type = 'SELL_STOP' if order['type'] == 'BUY_STOP' else 'BUY_STOP'
-        self.pending_orders = [o for o in self.pending_orders if o['type'] != opposite_type]
+    async def execute_trade_logic(self, order, current_price):
+        """Execute the trade logic after order is triggered and removed from pending"""
         
         # Execute via Deriv Multipliers API
         contract_type = "MULTUP" if order['type'] == 'BUY_STOP' else "MULTDOWN"
@@ -195,10 +189,11 @@ class GridStrategy:
             print(f"✅ Position {len(self.positions)}/{self.config['max_positions']}: {order['type']} | TP: {order['tp']:.2f} | SL: {order['sl']:.2f}")
         else:
             print("❌ Trade failed to execute.")
+            # If trade failed, maybe we should reset to idle?
+            self.iteration_state = "idle"
             return
         
         # PHASE 2: Place NEW BRACKET (Buy Stop + Sell Stop) around the FILLED PRICE
-        # We use the order['price'] (the level that was hit) as the anchor, or current_price
         anchor_price = current_price 
         
         if len(self.positions) < self.config['max_positions']:
@@ -226,6 +221,9 @@ class GridStrategy:
             
             self.pending_orders.extend([new_buy_stop, new_sell_stop])
             print(f"📍 Placed NEW BRACKET around {anchor_price:.2f}: BUY@{buy_stop_price:.2f} | SELL@{sell_stop_price:.2f}")
+        else:
+             print(f"📊 Max positions ({self.config['max_positions']}) reached. Waiting for closes...")
+             self.iteration_state = "waiting_close"
 
     async def update_positions(self):
         """Check status of open positions and remove closed ones"""
