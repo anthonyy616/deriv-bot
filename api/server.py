@@ -6,13 +6,56 @@ from core.bot_manager import BotManager
 import asyncio
 import os
 from dotenv import load_dotenv
-from supabase import create_client, Client
+import aiohttp
+import json
 
 load_dotenv()
 
-url: str = os.environ.get("SUPABASE_URL")
-key: str = os.environ.get("SUPABASE_KEY")
-supabase: Client = create_client(url, key)
+# Simple Supabase Client using REST API to avoid websocket conflicts
+class SupabaseClient:
+    def __init__(self, url, key):
+        self.url = url
+        self.key = key
+        self.headers = {
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+        }
+
+    async def get_user_id_by_token(self, token):
+        async with aiohttp.ClientSession() as session:
+            # Query Profiles_API table
+            endpoint = f"{self.url}/rest/v1/Profiles_API"
+            params = {"API": f"eq.{token}", "select": "user_id"}
+            async with session.get(endpoint, headers=self.headers, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data and len(data) > 0:
+                        return data[0]['user_id']
+                return None
+
+    async def get_profile(self, user_id):
+        async with aiohttp.ClientSession() as session:
+            endpoint = f"{self.url}/rest/v1/Profiles"
+            params = {"id": f"eq.{user_id}", "select": "selected_mt5_login"}
+            async with session.get(endpoint, headers=self.headers, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data and len(data) > 0:
+                        return data[0]
+                return None
+
+    async def update_profile(self, user_id, data):
+        async with aiohttp.ClientSession() as session:
+            endpoint = f"{self.url}/rest/v1/Profiles"
+            params = {"id": f"eq.{user_id}"}
+            async with session.patch(endpoint, headers=self.headers, params=params, json=data) as resp:
+                return resp.status in [200, 204]
+
+supabase_url: str = os.environ.get("SUPABASE_URL")
+supabase_key: str = os.environ.get("SUPABASE_KEY")
+supabase = SupabaseClient(supabase_url, supabase_key)
 
 app = FastAPI()
 
@@ -55,7 +98,6 @@ class ConfigUpdate(BaseModel):
     max_positions: int | None = None
     lot_size: float | None = None
     max_runtime_minutes: int | None = None
-    max_runtime_minutes: int | None = None
     max_drawdown_usd: float | None = None
 
 class SelectMT5Request(BaseModel):
@@ -77,16 +119,11 @@ async def connect(request: ConnectRequest):
         
         # Check for saved MT5 login in Supabase
         try:
-            # We need the user_id. But we don't have it here directly from the token unless we query Profiles_API.
-            # However, the frontend sends the token.
-            # Let's query Profiles_API to find the user_id for this token.
-            response = supabase.table("Profiles_API").select("user_id").eq("API", request.token).execute()
-            if response.data:
-                user_id = response.data[0]['user_id']
-                # Now get the selected_mt5_login from Profiles
-                profile_res = supabase.table("Profiles").select("selected_mt5_login").eq("id", user_id).execute()
-                if profile_res.data and profile_res.data[0]['selected_mt5_login']:
-                    saved_login = profile_res.data[0]['selected_mt5_login']
+            user_id = await supabase.get_user_id_by_token(request.token)
+            if user_id:
+                profile = await supabase.get_profile(user_id)
+                if profile and profile.get('selected_mt5_login'):
+                    saved_login = profile['selected_mt5_login']
                     print(f"Found saved MT5 login: {saved_login}")
                     
                     # Update the bot
@@ -165,23 +202,17 @@ async def select_mt5_account(request: SelectMT5Request, x_session_id: str = Head
     bot.set_mt5_login(request.login)
     
     # 2. Update Database
-    # We need to find the user_id associated with this bot's token.
-    # The bot stores the token in bot.client.api_token
     token = bot.client.api_token
     
     try:
-        # Find user_id
-        response = supabase.table("Profiles_API").select("user_id").eq("API", token).execute()
-        if response.data:
-            user_id = response.data[0]['user_id']
-            
-            # Update Profile
-            supabase.table("Profiles").update({"selected_mt5_login": request.login}).eq("id", user_id).execute()
-            return {"message": f"Selected account {request.login}", "saved": True}
-        else:
-            return {"message": f"Selected account {request.login} (Session only)", "saved": False}
+        user_id = await supabase.get_user_id_by_token(token)
+        if user_id:
+            success = await supabase.update_profile(user_id, {"selected_mt5_login": request.login})
+            if success:
+                return {"message": f"Selected account {request.login}", "saved": True}
+        
+        return {"message": f"Selected account {request.login} (Session only)", "saved": False}
             
     except Exception as e:
         print(f"Error saving selection to DB: {e}")
         return {"message": f"Selected account {request.login} (Session only)", "error": str(e)}
-

@@ -249,19 +249,15 @@ class DerivClient:
                 "type": action,
                 "volume": volume,
                 "symbol": symbol,
-                "product": "synthetic", # or "financial"? Usually inferred or required. Let's try without or default.
-                # "product" might be required. "synthetic" is likely for Derived.
             }
+            print(f"Sending MT5 Order: {req}")
             
             if stop_loss:
                 req["stop_loss"] = stop_loss
             if take_profit:
                 req["take_profit"] = take_profit
-                
-            # For market order, we might not need price, but some APIs require it.
-            # Usually mt5_new_order for market execution doesn't need price.
             
-            response = await self.api.send(req) # Using send directly if method not wrapped
+            response = await self.api.send(req)
             
             if 'error' in response:
                 print(f"MT5 Order Error: {response['error']['message']}")
