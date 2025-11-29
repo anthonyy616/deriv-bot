@@ -1,7 +1,6 @@
 import asyncio
 import uuid
 from typing import Dict
-from core.deriv_client import DerivClient
 from core.config_manager import ConfigManager
 from core.strategy_engine import GridStrategy
 
@@ -16,23 +15,13 @@ class BotManager:
         """
         session_id = str(uuid.uuid4())
         
-        # Initialize components with specific user credentials
-        client = DerivClient(app_id=app_id, api_token=token)
-        
-        # Connect to verify credentials
-        try:
-            await client.connect()
-        except Exception as e:
-            print(f"Failed to connect for session {session_id}: {e}")
-            raise e
-
         # Initialize ConfigManager with unique session ID
         config_manager = ConfigManager(user_id=session_id)
         
-        # Initialize Strategy
-        strategy = GridStrategy(client, config_manager)
+        # Initialize Strategy (No DerivClient needed)
+        strategy = GridStrategy(config_manager)
         
-        # Start Price Feed immediately
+        # Start Ticker (Passive)
         await strategy.start_ticker()
         
         # Store in memory
@@ -48,11 +37,6 @@ class BotManager:
         bot = self.bots.get(session_id)
         if bot:
             await bot.stop()
-            # Optionally remove from memory or keep for logs?
-            # For now, keep it but mark as stopped.
-            # If we want to fully cleanup:
-            # await bot.client.disconnect()
-            # del self.bots[session_id]
             print(f"Bot stopped for session: {session_id}")
 
     async def stop_all(self):

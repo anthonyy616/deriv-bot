@@ -1,8 +1,9 @@
 {
-    "symbol": "R_75",
-    "spread": 10.0,
-    "tp_dist": 16,
-    "sl_dist": 24,
-    "max_positions": 7,
-    "lot_size": 0.01
+    "symbol": "FX20",
+    "spread": 100,
+    "tp_dist": 160,
+    "sl_dist": 240,
+    "max_positions": 5,
+    "lot_size": 0.01,
+    "risk_percent": 0.5
 }

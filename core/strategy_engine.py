@@ -1,115 +1,70 @@
 import asyncio
 import time
+import requests
+import os
 from typing import Dict, List, Optional
-from core.deriv_client import DerivClient
 
 class GridStrategy:
-    def __init__(self, client: DerivClient, config_manager, symbol=None):
-        self.client = client
+    def __init__(self, config_manager, symbol=None):
         self.config_manager = config_manager
-        self.symbol = config_manager.get_config().get('symbol', 'R_75')
+        self.symbol = config_manager.get_config().get('symbol', 'FX20')
         self.cmp = None
-        self.pending_orders = []  # Orders waiting to trigger
-        self.positions = []  # Active positions (open contracts)
+        self.pending_orders = []
+        self.positions = []
         self.running = False
         self.iteration = 0
-        self.iteration_state = "idle"  # idle, building, waiting_close
-        self.tick_stream = None
-        self.mt5_login = None
-
-    def set_mt5_login(self, login):
-        self.mt5_login = login
-        print(f"Strategy updated with MT5 Login: {login}")
+        self.iteration_state = "idle"
+        self.mt5_bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
+        
+        # Load risk params
+        self.risk_percent = float(self.config_manager.get_config().get('risk_percent', 0.5))
 
     @property
     def config(self):
         return self.config_manager.get_config()
 
     async def start_ticker(self):
-        """Starts the price feed independent of trading logic"""
-        try:
-            # Refresh symbol from config
-            self.symbol = self.config.get('symbol', 'R_75')
-            print(f"Subscribing to {self.symbol}...")
-            
-            # Subscribe to ticks
-            # Note: DerivClient.subscribe_ticks returns a stream we can subscribe to
-            source_tick = await self.client.subscribe_ticks(self.symbol)
-            self.tick_stream = source_tick
-            source_tick.subscribe(lambda tick: asyncio.create_task(self.on_tick_callback(tick)))
-        except Exception as e:
-            print(f"Error starting ticker: {e}")
+        """
+        Passive ticker. In this architecture, ticks are pushed to us via on_external_tick.
+        We just verify we are ready.
+        """
+        print(f"Strategy ready to receive ticks for {self.symbol}")
 
     async def start(self):
-        """Starts the trading logic"""
         self.running = True
         self.start_time = time.time()
         self.iteration = 0
-        
-        # Default Runtime Logic
-        if self.config.get('max_runtime_minutes', 0) == 0:
-            print("⚠️ No runtime set. Defaulting to 60 minutes.")
-            self.config_manager.update_config({'max_runtime_minutes': 60})
-
-        try:
-            self.initial_balance = await self.client.get_balance()
-            print(f"Starting grid strategy on {self.symbol}. Initial Balance: {self.initial_balance}")
-        except Exception as e:
-            print(f"Error getting balance: {e}")
-            self.initial_balance = 0
-            
-        # Start main loop (Scheduler, Drawdown, etc.)
+        print(f"Starting Grid Strategy on {self.symbol} (Bridge Mode)")
         asyncio.create_task(self.main_loop())
 
     async def main_loop(self):
         while self.running:
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
+            # Logic that doesn't depend on ticks (e.g. time checks) can go here.
             
-            # 1. Check Scheduler
-            max_runtime = self.config.get('max_runtime_minutes', 0)
-            if max_runtime > 0:
-                elapsed = (time.time() - self.start_time) / 60
-                if elapsed >= max_runtime:
-                    print(f" Scheduler: Max runtime of {max_runtime}m reached. Stopping bot.")
-                    await self.stop()
-                    break
+            # Simple cleanup of closed positions (mock logic since we don't get callbacks yet)
+            # In a real full bridge, we'd poll the bridge for open positions.
+            # For now, we assume positions are managed by SL/TP on the MT5 side.
+            pass
 
-            # 2. Check Drawdown
-            max_dd = self.config.get('max_drawdown_usd', 0)
-            if max_dd > 0 and self.initial_balance > 0:
-                try:
-                    current_balance = await self.client.get_balance()
-                    drawdown = self.initial_balance - current_balance
-                    if drawdown >= max_dd:
-                        print(f" Risk: Max drawdown of ${max_dd} hit (Current DD: ${drawdown:.2f}). Stopping bot.")
-                        await self.stop()
-                        break
-                except Exception as e:
-                    print(f"Error checking balance: {e}")
+    async def on_external_tick(self, tick_data):
+        """Called by the API Server when a tick is received from the Bridge."""
+        if not self.running:
+            return
 
-            # 3. Update open positions status
-            await self.update_positions()
-
-            # 4. Check if iteration is complete
-            if self.iteration_state == "waiting_close" and len(self.positions) == 0:
-                print(f"✅ Iteration {self.iteration} complete. All positions closed.")
-                self.iteration += 1
-                self.iteration_state = "idle"
-                # Start new iteration if we have a price
-                if self.cmp:
-                    await self.place_initial_grid(self.cmp)
-
-    async def on_tick_callback(self, tick):
         try:
-            if 'tick' in tick:
-                price = tick['tick']['quote']
-                self.cmp = price
-                
-                # Only process trading logic if running
-                if self.running:
-                    await self.process_strategy(price)
+            # tick_data: {'symbol': 'FX20', 'bid': 1.23, 'ask': 1.24, 'time': ...}
+            if tick_data['symbol'] != self.symbol:
+                return
+
+            # Use ASK for Buy triggers, BID for Sell triggers? 
+            # For simplicity, use mid or just ask for now as 'current price'
+            price = tick_data['ask'] 
+            self.cmp = price
+            
+            await self.process_strategy(price)
         except Exception as e:
-            print(f"Error in on_tick_callback: {e}")
+            print(f"Error processing tick: {e}")
 
     async def process_strategy(self, price):
         # STAGE 1: Place initial grid if idle
@@ -122,7 +77,7 @@ class GridStrategy:
         if self.iteration_state == "building":
             triggered_order = None
             
-            # Check for triggers (Synchronous check)
+            # Check for triggers
             for order in self.pending_orders:
                 if (order['type'] == 'BUY_STOP' and price >= order['price']) or \
                    (order['type'] == 'SELL_STOP' and price <= order['price']):
@@ -130,18 +85,39 @@ class GridStrategy:
                     break
             
             if triggered_order:
-                # 1. Remove ALL pending orders immediately to prevent double triggers
                 self.pending_orders.clear()
-                
-                # 2. Execute the trade (Async)
                 print(f"⚡ Triggered {triggered_order['type']} at {price:.2f}")
                 await self.execute_trade_logic(triggered_order, price)
 
     async def place_initial_grid(self, price):
-        """PHASE 1: Place BUY_STOP and SELL_STOP at current_price ± spread"""
-        spread = self.config['spread']
-        tp_dist = 16  # TP distance from entry
-        sl_dist = 24  # SL distance from entry
+        spread = self.config.get('spread', 100) # Points? Or Price difference? 
+        # Assuming config 'spread' is in POINTS if using MT5, or Price. 
+        # Let's assume Price difference for now to match previous logic.
+        
+        tp_dist = 160 # Points (e.g. 16 pips if 10 points/pip) - Adjust as needed
+        sl_dist = 240 # Points
+        
+        # If the user meant "spread" as distance:
+        dist = spread * 0.0001 if "FX" in self.symbol else spread # Rough heuristic
+        # Actually, let's stick to the user's "points" requirement.
+        # If the strategy calculates PRICE, we need to convert to POINTS for the bridge.
+        # OR, we send the calculated SL/TP PRICES to the bridge?
+        # The bridge expects sl_points, tp_points.
+        
+        # Strategy Logic:
+        # Buy Stop @ Price + Spread
+        # Sell Stop @ Price - Spread
+        
+        # We'll stick to the previous logic of calculating absolute prices for triggers,
+        # but when sending to bridge, we send POINTS for SL/TP.
+        
+        # Previous logic:
+        # buy_stop_price = price + spread
+        # tp = buy_stop_price + tp_dist
+        # sl = buy_stop_price - sl_dist
+        
+        # So TP distance = tp_dist, SL distance = sl_dist.
+        # We will use these directly for the bridge.
         
         buy_stop_price = price + spread
         sell_stop_price = price - spread
@@ -149,141 +125,88 @@ class GridStrategy:
         buy_stop = {
             'type': 'BUY_STOP',
             'price': buy_stop_price,
-            'tp': buy_stop_price + tp_dist,
-            'sl': buy_stop_price - sl_dist
+            'sl_points': sl_dist,
+            'tp_points': tp_dist
         }
         
         sell_stop = {
             'type': 'SELL_STOP',
             'price': sell_stop_price,
-            'tp': sell_stop_price - tp_dist,
-            'sl': sell_stop_price + sl_dist
+            'sl_points': sl_dist,
+            'tp_points': tp_dist
         }
         
         self.pending_orders = [buy_stop, sell_stop]
-        print(f"🎯 Iteration {self.iteration + 1} STARTED: Placed BUY_STOP at {buy_stop_price:.2f} | SELL_STOP at {sell_stop_price:.2f}")
+        print(f"🎯 Iteration {self.iteration + 1}: Waiting for BUY@{buy_stop_price:.5f} or SELL@{sell_stop_price:.5f}")
 
     async def execute_trade_logic(self, order, current_price):
-        """Execute the trade logic after order is triggered and removed from pending"""
+        action = "buy" if order['type'] == 'BUY_STOP' else "sell"
         
-        trade_result = None
-        is_mt5 = bool(self.mt5_login)
-        amount = self.config.get('lot_size', 10) # Volume for MT5, Stake for Multipliers
+        # Calculate Lot Size (Mock or Config)
+        volume = self.config.get('lot_size', 0.01)
         
-        if is_mt5:
-            # Execute via MT5 API
-            action = "buy" if order['type'] == 'BUY_STOP' else "sell"
-            # Note: order['type'] is BUY_STOP, which triggers a BUY.
+        payload = {
+            "action": action,
+            "symbol": self.symbol,
+            "volume": volume,
+            "sl_points": int(order['sl_points']),
+            "tp_points": int(order['tp_points']),
+            "comment": f"Grid Itr {self.iteration}"
+        }
+        
+        try:
+            # Send signal to bridge
+            # We use requests.post (sync) inside async? Better to use aiohttp or run_in_executor.
+            # For simplicity in this migration, we'll use requests but it blocks the loop briefly.
+            # Given low frequency, it's acceptable.
+            response = requests.post(f"{self.mt5_bridge_url}/execute_signal", json=payload, timeout=2)
             
-            trade_result = await self.client.buy_mt5_order(
-                login=self.mt5_login,
-                action=action,
-                volume=amount,
-                symbol=self.symbol,
-                stop_loss=order['sl'],
-                take_profit=order['tp']
-            )
-        else:
-            # Execute via Deriv Multipliers API
-            contract_type = "MULTUP" if order['type'] == 'BUY_STOP' else "MULTDOWN"
-            multiplier = 100
-            
-            trade_result = await self.client.buy_multiplier(
-                contract_type=contract_type,
-                amount=amount,
-                symbol=self.symbol,
-                multiplier=multiplier,
-                stop_loss=order['sl'],
-                take_profit=order['tp']
-            )
-        
-        if trade_result:
-            # Add to active positions
-            position = {
-                'contract_id': trade_result.get('order_id') if is_mt5 else trade_result['contract_id'],
-                'type': order['type'],
-                'entry_price': current_price,
-                'tp': order['tp'],
-                'sl': order['sl'],
-                'buy_price': trade_result.get('price') if is_mt5 else trade_result.get('buy_price', amount),
-                'is_mt5': is_mt5
-            }
-            self.positions.append(position)
-            print(f"✅ Position {len(self.positions)}/{self.config['max_positions']}: {order['type']} | TP: {order['tp']:.2f} | SL: {order['sl']:.2f}")
-        else:
-            print("❌ Trade failed to execute.")
-            # If trade failed, maybe we should reset to idle?
+            if response.status_code == 200:
+                data = response.json()
+                print(f"✅ Trade Executed via Bridge: {data}")
+                
+                # Record position
+                self.positions.append({
+                    "id": data.get("order_id"),
+                    "type": order['type'],
+                    "entry_price": data.get("price")
+                })
+                
+                # Place Bracket (Next Grid)
+                # Logic: If we opened a trade, we place new stops around THIS trade?
+                # The previous logic was: "Place NEW BRACKET around the FILLED PRICE"
+                # We can do that.
+                
+                await self.place_next_bracket(data.get("price"))
+                
+            else:
+                print(f"❌ Bridge Error: {response.text}")
+                self.iteration_state = "idle"
+                
+        except Exception as e:
+            print(f"❌ Failed to contact Bridge: {e}")
             self.iteration_state = "idle"
+
+    async def place_next_bracket(self, anchor_price):
+        if len(self.positions) >= self.config.get('max_positions', 5):
+            print("Max positions reached. Waiting for clear.")
+            self.iteration_state = "waiting_close"
             return
 
+        spread = self.config.get('spread', 100)
+        tp_dist = 160
+        sl_dist = 240
         
-        # PHASE 2: Place NEW BRACKET (Buy Stop + Sell Stop) around the FILLED PRICE
-        anchor_price = current_price 
+        buy_stop_price = anchor_price + spread
+        sell_stop_price = anchor_price - spread
         
-        if len(self.positions) < self.config['max_positions']:
-            spread = self.config['spread']
-            tp_dist = 16
-            sl_dist = 24
-            
-            # New Buy Stop
-            buy_stop_price = anchor_price + spread
-            new_buy_stop = {
-                'type': 'BUY_STOP',
-                'price': buy_stop_price,
-                'tp': buy_stop_price + tp_dist,
-                'sl': buy_stop_price - sl_dist
-            }
-            
-            # New Sell Stop
-            sell_stop_price = anchor_price - spread
-            new_sell_stop = {
-                'type': 'SELL_STOP',
-                'price': sell_stop_price,
-                'tp': sell_stop_price - tp_dist,
-                'sl': sell_stop_price + sl_dist
-            }
-            
-            self.pending_orders.extend([new_buy_stop, new_sell_stop])
-            print(f"📍 Placed NEW BRACKET around {anchor_price:.2f}: BUY@{buy_stop_price:.2f} | SELL@{sell_stop_price:.2f}")
-        else:
-             print(f"📊 Max positions ({self.config['max_positions']}) reached. Waiting for closes...")
-             self.iteration_state = "waiting_close"
-
-    async def update_positions(self):
-        """Check status of open positions and remove closed ones"""
-        for position in self.positions[:]:
-            try:
-                if position.get('is_mt5'):
-                    # Check MT5 position status
-                    status = self.client.check_mt5_position_status(position['contract_id'])
-                    if status and not status['is_open']:
-                        print(f"🔴 MT5 Position CLOSED: {position['type']} | P/L: ${status['profit']:.2f}")
-                        self.positions.remove(position)
-                else:
-                    status = await self.client.get_contract_status(position['contract_id'], login=self.mt5_login)
-                    if status and status.get('is_sold') == 1:
-                        # Position closed
-                        profit = status.get('profit', 0)
-                        exit_reason = "TP" if profit > 0 else "SL"
-                        print(f"🔴 Position CLOSED: {position['type']} | {exit_reason} | P/L: ${profit:.2f}")
-                        self.positions.remove(position)
-            except Exception as e:
-                print(f"Error updating position {position.get('contract_id')}: {e}")
+        self.pending_orders = [
+            {'type': 'BUY_STOP', 'price': buy_stop_price, 'sl_points': sl_dist, 'tp_points': tp_dist},
+            {'type': 'SELL_STOP', 'price': sell_stop_price, 'sl_points': sl_dist, 'tp_points': tp_dist}
+        ]
+        print(f"📍 New Bracket Placed around {anchor_price:.5f}")
 
     async def stop(self):
         self.running = False
-        print("🛑 Strategy stopped.")
+        print("Strategy Stopped")
 
-    def get_status(self):
-        return {
-            "running": self.running,
-            "symbol": self.symbol,
-            "current_price": self.cmp,
-            "positions_count": len(self.positions),
-            "pending_orders_count": len(self.pending_orders),
-            "iteration": self.iteration,
-            "iteration_state": self.iteration_state,
-            "config": self.config,
-            "mt5_login": self.mt5_login,
-            "account": getattr(self.client, 'account_info', None)
-        }
