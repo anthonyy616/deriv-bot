@@ -461,6 +461,7 @@
         let isRunning = false;
         let sessionId = localStorage.getItem('session_id');
         let supabase = null;
+        let currentUserId = null;
 
         // Minimum Lot Sizes
         const minLotSizes = {
@@ -479,13 +480,45 @@
                 if (env.SUPABASE_URL && env.SUPABASE_KEY) {
                     supabase = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
                     console.log("Supabase initialized");
-                    checkLogin();
+
+                    // Check for existing session
+                    const { data: { session } } = await supabase.auth.getSession();
+                    if (session) {
+                        console.log("Existing session found, auto-reconnecting...");
+                        currentUserId = session.user.id;
+                        await autoReconnect(session.user.id);
+                    } else {
+                        checkLogin();
+                    }
                 } else {
                     console.warn("Supabase credentials not found. Using direct token mode.");
                     checkLogin();
                 }
             } catch (e) {
                 console.error("Failed to load env:", e);
+                checkLogin();
+            }
+        }
+
+        async function autoReconnect(userId) {
+            try {
+                // Fetch API Token from Supabase
+                const { data: apiData, error: apiError } = await supabase
+                    .from('Profiles_API')
+                    .select('API')
+                    .eq('user_id', userId)
+                    .single();
+
+                if (apiData && apiData.API) {
+                    // Auto-connect with stored token
+                    await connectToBot(apiData.API);
+                } else {
+                    // No API token found, show login
+                    console.log("No API token found for this user");
+                    checkLogin();
+                }
+            } catch (err) {
+                console.error("Auto-reconnect failed:", err);
                 checkLogin();
             }
         }
@@ -596,6 +629,7 @@
 
                 if (!data.user) throw new Error("No user returned");
                 const userId = data.user.id;
+                currentUserId = userId;  // Store for session persistence
 
                 // 3. Fetch API Token (Now using RLS protected query)
                 const { data: apiData, error: apiError } = await supabase
@@ -679,10 +713,16 @@
             }
         }
 
-        function logout() {
-            // Soft Logout
+        async function logout() {
+            // Sign out from Supabase
+            if (supabase) {
+                await supabase.auth.signOut();
+            }
+
+            // Clear local storage
             localStorage.removeItem('session_id');
             sessionId = null;
+            currentUserId = null;
 
             // Reset UI
             document.getElementById('login-modal').style.display = 'flex';
