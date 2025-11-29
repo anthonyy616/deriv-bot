@@ -65,7 +65,7 @@ class GridStrategy:
             if max_runtime > 0:
                 elapsed = (time.time() - self.start_time) / 60
                 if elapsed >= max_runtime:
-                    print(f"⏰ Scheduler: Max runtime of {max_runtime}m reached. Stopping bot.")
+                    print(f" Scheduler: Max runtime of {max_runtime}m reached. Stopping bot.")
                     await self.stop()
                     break
 
@@ -76,7 +76,7 @@ class GridStrategy:
                     current_balance = await self.client.get_balance()
                     drawdown = self.initial_balance - current_balance
                     if drawdown >= max_dd:
-                        print(f"⚠️ Risk: Max drawdown of ${max_dd} hit (Current DD: ${drawdown:.2f}). Stopping bot.")
+                        print(f" Risk: Max drawdown of ${max_dd} hit (Current DD: ${drawdown:.2f}). Stopping bot.")
                         await self.stop()
                         break
                 except Exception as e:
