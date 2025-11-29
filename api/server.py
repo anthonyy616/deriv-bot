@@ -75,8 +75,15 @@ async def get_config(bot = Depends(get_bot_or_raise)):
 
 @app.post("/config")
 async def update_config(config: ConfigUpdate, bot = Depends(get_bot_or_raise)):
+    old_symbol = bot.config.get('symbol')
     new_config = {k: v for k, v in config.dict().items() if v is not None}
     updated = bot.config_manager.update_config(new_config)
+    
+    # If symbol changed, restart ticker
+    if config.symbol and config.symbol != old_symbol:
+        print(f"Symbol changed from {old_symbol} to {config.symbol}. Restarting ticker...")
+        await bot.start_ticker()
+        
     return updated
 
 @app.post("/control/start")

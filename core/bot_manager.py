@@ -32,6 +32,9 @@ class BotManager:
         # Initialize Strategy
         strategy = GridStrategy(client, config_manager)
         
+        # Start Price Feed immediately
+        await strategy.start_ticker()
+        
         # Store in memory
         self.bots[session_id] = strategy
         

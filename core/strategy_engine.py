@@ -14,16 +14,32 @@ class GridStrategy:
         self.running = False
         self.iteration = 0
         self.iteration_state = "idle"  # idle, building, waiting_close
+        self.tick_stream = None
 
     @property
     def config(self):
         return self.config_manager.get_config()
 
+    async def start_ticker(self):
+        """Starts the price feed independent of trading logic"""
+        try:
+            # Refresh symbol from config
+            self.symbol = self.config.get('symbol', 'R_75')
+            print(f"Subscribing to {self.symbol}...")
+            
+            # Subscribe to ticks
+            # Note: DerivClient.subscribe_ticks returns a stream we can subscribe to
+            source_tick = await self.client.subscribe_ticks(self.symbol)
+            self.tick_stream = source_tick
+            source_tick.subscribe(lambda tick: asyncio.create_task(self.on_tick_callback(tick)))
+        except Exception as e:
+            print(f"Error starting ticker: {e}")
+
     async def start(self):
+        """Starts the trading logic"""
         self.running = True
         self.start_time = time.time()
         self.iteration = 0
-        self.symbol = self.config.get('symbol', 'R_75')
         
         # Default Runtime Logic
         if self.config.get('max_runtime_minutes', 0) == 0:
@@ -36,12 +52,11 @@ class GridStrategy:
         except Exception as e:
             print(f"Error getting balance: {e}")
             self.initial_balance = 0
+            
+        # Start main loop (Scheduler, Drawdown, etc.)
+        asyncio.create_task(self.main_loop())
 
-        # Subscribe to ticks
-        source_tick = await self.client.subscribe_ticks(self.symbol)
-        source_tick.subscribe(lambda tick: asyncio.create_task(self.on_tick_callback(tick)))
-        
-        # Start main loop
+    async def main_loop(self):
         while self.running:
             await asyncio.sleep(2)
             
@@ -79,9 +94,71 @@ class GridStrategy:
                 if self.cmp:
                     await self.place_initial_grid(self.cmp)
 
+    async def on_tick_callback(self, tick):
+        if 'tick' in tick:
+            price = tick['tick']['quote']
+            self.cmp = price
+            
+            # Only process trading logic if running
+            if self.running:
+                await self.process_strategy(price)
+
+    async def process_strategy(self, price):
+        # STAGE 1: Place initial grid if idle
+        if self.iteration_state == "idle" and not self.pending_orders and not self.positions:
+            await self.place_initial_grid(price)
+            self.iteration_state = "building"
+            return
+
+        # STAGE 2: Check pending orders for triggers
+        if self.iteration_state == "building":
+            for order in self.pending_orders[:]:
+                triggered = False
+                
+                if order['type'] == 'BUY_STOP' and price >= order['price']:
+                    triggered = True
+                elif order['type'] == 'SELL_STOP' and price <= order['price']:
+                    triggered = True
+                
+                if triggered:
+                    await self.execute_order(order, price)
+                    
+                    # Check if max positions reached
+                    if len(self.positions) >= self.config['max_positions']:
+                        print(f"📊 Max positions ({self.config['max_positions']}) reached. Waiting for closes...")
+                        self.pending_orders.clear()  # Cancel all pending
+                        self.iteration_state = "waiting_close"
+                        break
+
+    async def place_initial_grid(self, price):
+        """PHASE 1: Place BUY_STOP and SELL_STOP at current_price ± spread"""
+        spread = self.config['spread']
+        tp_dist = 16  # TP distance from entry
+        sl_dist = 24  # SL distance from entry
+        
+        buy_stop_price = price + spread
+        sell_stop_price = price - spread
+        
+        buy_stop = {
+            'type': 'BUY_STOP',
+            'price': buy_stop_price,
+            'tp': buy_stop_price + tp_dist,
+            'sl': buy_stop_price - sl_dist
+        }
+        
+        sell_stop = {
+            'type': 'SELL_STOP',
+            'price': sell_stop_price,
+            'tp': sell_stop_price - tp_dist,
+            'sl': sell_stop_price + sl_dist
+        }
+        
+        self.pending_orders = [buy_stop, sell_stop]
+        print(f" Iteration {self.iteration + 1} STARTED: Placed BUY_STOP at {buy_stop_price:.2f} | SELL_STOP at {sell_stop_price:.2f}")
+
     async def execute_order(self, order, current_price):
         """Execute the triggered order and place NEW BRACKET around the filled price"""
-        print(f"⚡ Executing {order['type']} at {current_price:.2f}")
+        print(f" Executing {order['type']} at {current_price:.2f}")
         
         # Remove from pending
         self.pending_orders.remove(order)
