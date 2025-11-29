@@ -560,8 +560,8 @@
         async function handleSupabaseLogin(e) {
             e.preventDefault();
             const email = document.getElementById('email').value;
-            // Password field removed
             const errorMsg = document.getElementById('login-error');
+            const dummyPassword = "deriv-bot-default-pass"; // Using fixed password to match UI (no password field)
 
             errorMsg.classList.add('hidden');
 
@@ -572,31 +572,32 @@
             }
 
             try {
-                // 1. Check if user exists in Profiles (Custom Table)
-                let { data: profiles, error } = await supabase
-                    .from('Profiles')
-                    .select('*')
-                    .eq('email', email)
+                // 1. Try to Login
+                let { data, error } = await supabase.auth.signInWithPassword({
+                    email: email,
+                    password: dummyPassword
+                });
 
-                let userId;
+                if (error && error.message.includes("Invalid login credentials")) {
+                    // 2. If login fails, try to Register
+                    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+                        email: email,
+                        password: dummyPassword
+                    });
 
-                if (profiles && profiles.length > 0) {
-                    // Login success
-                    userId = profiles[0].id;
-                    log("Logged in as " + email);
-                } else {
-                    // Register new user
-                    const { data: newProfile, error: createError } = await supabase
-                        .from('Profiles')
-                        .insert([{ email, password: "default-demo-password" }])
-                        .select();
-
-                    if (createError) throw createError;
-                    userId = newProfile[0].id;
+                    if (signUpError) throw signUpError;
+                    data = signUpData;
                     log("Account created for " + email);
+                } else if (error) {
+                    throw error;
+                } else {
+                    log("Logged in as " + email);
                 }
 
-                // 2. Fetch API Token
+                if (!data.user) throw new Error("No user returned");
+                const userId = data.user.id;
+
+                // 3. Fetch API Token (Now using RLS protected query)
                 const { data: apiData, error: apiError } = await supabase
                     .from('Profiles_API')
                     .select('API')
@@ -609,16 +610,15 @@
                 } else {
                     // No token, ask user
                     switchTab('token');
-                    document.getElementById('token-email').value = email; // Pre-fill
+                    document.getElementById('token-email').value = email;
                     document.getElementById('login-error').textContent = "Please enter your API Token to complete setup.";
                     document.getElementById('login-error').classList.remove('hidden');
-                    // Store userId temporarily to save token later
                     window.pendingUserId = userId;
                 }
 
             } catch (err) {
                 console.error(err);
-                errorMsg.textContent = "Login failed: " + err.message;
+                errorMsg.textContent = "Auth failed: " + err.message;
                 errorMsg.classList.remove('hidden');
             }
         }
