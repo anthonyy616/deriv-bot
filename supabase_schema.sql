@@ -3,6 +3,7 @@ CREATE TABLE "Profiles" (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT NOT NULL UNIQUE,
     password TEXT NOT NULL, -- Note: In production, store HASHED passwords, not plain text.
+    selected_mt5_login TEXT, -- Stores the user's preferred MT5 account login ID
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

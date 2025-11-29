@@ -15,6 +15,11 @@ class GridStrategy:
         self.iteration = 0
         self.iteration_state = "idle"  # idle, building, waiting_close
         self.tick_stream = None
+        self.mt5_login = None
+
+    def set_mt5_login(self, login):
+        self.mt5_login = login
+        print(f"Strategy updated with MT5 Login: {login}")
 
     @property
     def config(self):
@@ -172,7 +177,8 @@ class GridStrategy:
             symbol=self.symbol,
             multiplier=multiplier,
             stop_loss=order['sl'],
-            take_profit=order['tp']
+            take_profit=order['tp'],
+            login=self.mt5_login
         )
         
         if trade_result:
@@ -229,7 +235,7 @@ class GridStrategy:
         """Check status of open positions and remove closed ones"""
         for position in self.positions[:]:
             try:
-                status = await self.client.get_contract_status(position['contract_id'])
+                status = await self.client.get_contract_status(position['contract_id'], login=self.mt5_login)
                 if status and status.get('is_sold') == 1:
                     # Position closed
                     profit = status.get('profit', 0)
@@ -253,5 +259,6 @@ class GridStrategy:
             "iteration": self.iteration,
             "iteration_state": self.iteration_state,
             "config": self.config,
+            "mt5_login": self.mt5_login,
             "account": getattr(self.client, 'account_info', None)
         }

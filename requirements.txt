@@ -7,3 +7,4 @@ uvicorn
 ta-lib
 schedule
 python-dotenv
+supabase

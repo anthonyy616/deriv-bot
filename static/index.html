@@ -321,9 +321,29 @@
             </div>
             <div class="header-controls flex items-center gap-2 md:gap-4">
                 <!-- Account Info -->
-                <div id="account-info" class="hidden md:flex flex-col items-end text-right mr-2">
-                    <span id="acc-loginid" class="text-xs font-bold text-slate-700 dark:text-slate-300">---</span>
-                    <span id="acc-currency" class="text-[10px] text-muted">USD</span>
+                <!-- Account Info / Selector -->
+                <div id="account-selector-container" class="hidden md:flex items-center gap-2 mr-2">
+                    <div class="relative">
+                        <select id="mt5-account-select" onchange="handleAccountSelect(this.value)"
+                            class="appearance-none bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs rounded px-2 py-1 pr-8 focus:outline-none focus:border-blue-500 max-w-[200px] truncate">
+                            <option value="">Select Account...</option>
+                        </select>
+                        <div
+                            class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
+                            <svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <button onclick="refreshAccounts()" class="p-1 text-slate-400 hover:text-blue-500"
+                        title="Reload Accounts">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15">
+                            </path>
+                        </svg>
+                    </button>
                 </div>
 
                 <button id="theme-btn" class="btn-theme" onclick="toggleTheme()">
@@ -702,6 +722,8 @@
                     localStorage.setItem('session_id', sessionId);
                     document.getElementById('login-modal').style.display = 'none';
                     log("Connected successfully.");
+                    document.getElementById('account-selector-container').classList.remove('hidden');
+                    refreshAccounts();
                     fetchStatus();
                     setInterval(fetchStatus, 1000);
                 } else {
@@ -743,10 +765,101 @@
             btn.className = "btn btn-success";
             btn.onclick = toggleBot;
 
-            // Hide account info
-            document.getElementById('account-info').classList.add('hidden');
+            // Hide account selector
+            document.getElementById('account-selector-container').classList.add('hidden');
 
             log("Logged out.");
+        }
+
+        // MT5 Account Logic
+        async function refreshAccounts() {
+            if (!sessionId) return;
+            const select = document.getElementById('mt5-account-select');
+            select.innerHTML = '<option>Loading...</option>';
+
+            try {
+                const res = await fetch('/api/user/mt5-accounts', {
+                    method: 'POST',
+                    headers: { 'X-Session-ID': sessionId }
+                });
+                const data = await res.json();
+
+                select.innerHTML = '<option value="">Select Account...</option>';
+
+                if (data.accounts && data.accounts.length > 0) {
+                    let syntheticFound = false;
+
+                    data.accounts.forEach(acc => {
+                        const opt = document.createElement('option');
+                        opt.value = acc.login;
+                        opt.textContent = acc.display_name;
+
+                        // Highlight synthetic accounts
+                        if (acc.market_type === 'synthetic' || acc.market_type === 'gaming') {
+                            opt.classList.add('font-bold');
+                            // Auto-select first synthetic if none selected
+                            if (!syntheticFound) {
+                                syntheticFound = true;
+                                // If we don't have a selection yet, we could suggest this one.
+                                // But let's wait for fetchStatus to confirm if we have a saved one.
+                                // If after a timeout we still don't have one, we could default.
+                                // For now, let's just mark it.
+                            }
+                        }
+                        select.appendChild(opt);
+                    });
+
+                    log("Accounts loaded.");
+
+                    // Bonus: Auto-select if nothing selected
+                    setTimeout(() => {
+                        if (!select.value && data.accounts.length > 0) {
+                            const synthetic = data.accounts.find(a => a.market_type === 'synthetic' || a.market_type === 'gaming');
+                            if (synthetic) {
+                                select.value = synthetic.login;
+                                handleAccountSelect(synthetic.login);
+                                log("Auto-selected Synthetic account: " + synthetic.login);
+                            }
+                        }
+                    }, 1000); // Wait for fetchStatus to potentially fill it first
+
+                } else {
+                    select.innerHTML = '<option>No MT5 Accounts</option>';
+                }
+
+                // Trigger status fetch to see if we have a selected login
+                fetchStatus();
+
+            } catch (e) {
+                console.error("Error fetching accounts:", e);
+                select.innerHTML = '<option>Error loading accounts</option>';
+            }
+        }
+
+        async function handleAccountSelect(login) {
+            if (!login || !sessionId) return;
+
+            try {
+                const res = await fetch('/api/user/select-mt5', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Session-ID': sessionId
+                    },
+                    body: JSON.stringify({ login: login })
+                });
+                const data = await res.json();
+
+                if (data.saved) {
+                    log("Account selected & saved: " + login);
+                } else {
+                    log("Account selected (Session): " + login);
+                }
+
+            } catch (e) {
+                console.error("Error selecting account:", e);
+                log("Error selecting account.");
+            }
         }
 
         async function fetchStatus() {
@@ -796,6 +909,13 @@
                         document.getElementById('lot_size').value = data.config.lot_size || 10;
                         document.getElementById('max_runtime_minutes').value = data.config.max_runtime_minutes || 0;
                         document.getElementById('max_drawdown_usd').value = data.config.max_drawdown_usd || 0;
+                    }
+                }
+
+                if (data.mt5_login) {
+                    const select = document.getElementById('mt5-account-select');
+                    if (select.value !== data.mt5_login) {
+                        select.value = data.mt5_login;
                     }
                 }
 
