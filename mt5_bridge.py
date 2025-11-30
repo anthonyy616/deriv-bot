@@ -1,13 +1,10 @@
 import MetaTrader5 as mt5
 import asyncio
 import uvicorn
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import requests
 import os
-import json
-import time
-from datetime import datetime
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 
@@ -15,18 +12,16 @@ from contextlib import asynccontextmanager
 load_dotenv()
 
 # Configuration
-# Load variables
 LOGIN = int(os.getenv("MT5_LOGIN"))
 PASSWORD = os.getenv("MT5_PASSWORD")
 SERVER = os.getenv("MT5_SERVER")
 PATH = os.getenv("MT5_PATH")
 BRIDGE_PORT = int(os.getenv("BRIDGE_PORT", 8001))
-SYMBOL = "FX Vol 20" # Ensure this matches your broker's symbol name EXACTLY
-
-app = FastAPI(title="MT5 Bridge")
+SIGNAL_SERVER_URL = os.getenv("SIGNAL_SERVER_URL", "http://localhost:8000")
+SYMBOL = "FX Vol 20" 
 
 class TradeSignal(BaseModel):
-    action: str  # "buy" or "sell"
+    action: str
     symbol: str
     volume: float
     sl_points: int
@@ -34,73 +29,50 @@ class TradeSignal(BaseModel):
     magic: int = 123456
     comment: str = "MT5 Bridge Trade"
 
-class TickData(BaseModel):
-    symbol: str
-    bid: float
-    ask: float
-    time: int
-    point: float
-
-# --- MT5 Management ---
-
-def initialize_mt5():
-    print(f"Attempting to connect to MT5 at: {MT5_PATH}")
-    # Attempt to initialize with path
-    if not mt5.initialize(path=MT5_PATH):
-        print(f"❌ initialize() failed, error code = {mt5.last_error()}")
-        # Try without path (if it's already running or in registry)
-        print("Retrying without path...")
-        if not mt5.initialize():
-            print(f"❌ initialize() without path failed, error code = {mt5.last_error()}")
-            return False
-    
-    # Login
-    authorized = mt5.login(MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
-    if authorized:
-        print(f"✅ Connected to MT5 account #{MT5_LOGIN}")
-        account_info = mt5.account_info()
-        if account_info:
-            print(f"   Balance: {account_info.balance} USD, Equity: {account_info.equity} USD")
-    else:
-        print(f"❌ Failed to login to account #{MT5_LOGIN}, error code: {mt5.last_error()}")
-    return authorized
+# --- Helper Functions ---
 
 def ensure_symbol(symbol):
+    """Attempts to select the symbol in Market Watch."""
+    # Ensure terminal is connected first
+    if not mt5.terminal_info():
+        return False
+        
     selected = mt5.symbol_select(symbol, True)
     if not selected:
-        print(f"Failed to select {symbol}, error code = {mt5.last_error()}")
+        print(f"   [MT5] Failed to select '{symbol}' (Error: {mt5.last_error()})")
         return False
     return True
 
-# --- Background Tick Stream ---
-
 async def tick_stream_loop():
     """Continuously polls MT5 for ticks and sends them to the Signal Server."""
-    print(f"Starting tick stream for {SYMBOL}...")
-    if not ensure_symbol(SYMBOL):
-        print("Symbol not available. Stream aborted.")
-        return
-
-    last_time = 0
-    symbol_info = mt5.symbol_info(SYMBOL)
-    if not symbol_info:
-        print(f"Failed to get symbol info for {SYMBOL}")
-        return
-        
-    point = symbol_info.point
+    print(f"🚀 Starting tick stream for {SYMBOL}...")
     
-    while True:
-        # Check connection
-        if not mt5.terminal_info():
-            print("MT5 disconnected, attempting reconnect...")
-            initialize_mt5()
-            await asyncio.sleep(5)
-            continue
+    # 1. Wait for Terminal Connection
+    while not mt5.terminal_info():
+        print("   [Stream] Waiting for terminal connection...")
+        await asyncio.sleep(2)
 
+    # 2. Robust Symbol Check (Retry Loop)
+    retry_count = 0
+    while not ensure_symbol(SYMBOL):
+        retry_count += 1
+        print(f"   [Stream] Retrying symbol selection ({retry_count}/5)...")
+        await asyncio.sleep(2)
+        if retry_count > 5:
+            print(f"❌ [Stream] ABORT: Could not find symbol '{SYMBOL}'. Check name/broker.")
+            return
+
+    symbol_info = mt5.symbol_info(SYMBOL)
+    point = symbol_info.point if symbol_info else 0.001
+    last_time = 0
+    
+    print(f"✅ [Stream] Live and streaming {SYMBOL}...")
+
+    # 3. Stream Loop
+    while True:
         tick = mt5.symbol_info_tick(SYMBOL)
         if tick and tick.time > last_time:
             last_time = tick.time
-            # Send to Signal Server
             try:
                 payload = {
                     "symbol": SYMBOL,
@@ -109,80 +81,90 @@ async def tick_stream_loop():
                     "time": int(tick.time),
                     "point": point
                 }
-                # Use a short timeout to avoid blocking if server is down
-                requests.post(f"{SIGNAL_SERVER_URL}/tick", json=payload, timeout=0.5)
-            except Exception as e:
-                # Suppress connection errors to keep log clean
-                pass
+                # Fast timeout so bridge doesn't lag if main server is busy
+                requests.post(f"{SIGNAL_SERVER_URL}/tick", json=payload, timeout=0.1)
+            except Exception:
+                pass 
         
-        await asyncio.sleep(0.1) # Poll interval
+        await asyncio.sleep(0.01) # 10ms poll rate
 
-# --- API Endpoints ---
+# --- Lifespan (The Critical Fix) ---
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Initialize with the specific path to your Weltrade terminal
+    # --- STARTUP ---
+    print("\n--- Bridge Startup ---")
+    
+    # 1. Initialize MT5
     if not mt5.initialize(path=PATH):
-        print(f"Error initializing: {mt5.last_error()}")
-        # Create a visual/audible alert here if needed
-    else:
-        print(f"MT5 Initialized at: {PATH}")
-
-    # 2. Check if we are ALREADY logged in to the correct account
+        print(f"❌ Error initializing: {mt5.last_error()}")
+        if not mt5.initialize(): # Try default path fallback
+            print(f"❌ Critical: Connection failed.")
+    
+    # 2. Smart Login
     current_account = mt5.account_info()
-    
     if current_account and current_account.login == LOGIN:
-        print(f"✅ Already logged in as {LOGIN}. Skipping re-login.")
+        print(f"✅ Already logged in as {LOGIN}")
     else:
-        print(f"⚠️ Not logged in or wrong account. Attempting login for {LOGIN}...")
-        authorized = mt5.login(LOGIN, password=PASSWORD, server=SERVER)
-        if not authorized:
-            print(f"❌ Failed to login: {mt5.last_error()}")
+        print(f"⚠️ Logging in as {LOGIN}...")
+        if mt5.login(LOGIN, password=PASSWORD, server=SERVER):
+            print(f"✅ Login successful")
+        else:
+            print(f"❌ Login failed: {mt5.last_error()}")
+
+    # 3. Start Background Stream
+    task = asyncio.create_task(tick_stream_loop())
     
-    # 3. FORCE the symbol to appear in Market Watch
-    # This fixes the "assets disappear" issue
-    symbol_found = mt5.symbol_select(SYMBOL, True)
-    if symbol_found:
-        print(f"✅ Symbol '{SYMBOL}' successfully added to Market Watch.")
-    else:
-        print(f"❌ Could not find symbol '{SYMBOL}'. Check the name in MT5 (Ctrl+U).")
-
-    yield # Application runs here
-
-    # Shutdown logic (optional, keeping it open is usually better for bots)
-    print("Shutting down bridge...")
+    print("----------------------\n")
+    
+    # 🚨 THIS YIELD IS REQUIRED. DO NOT REMOVE. 🚨
+    yield 
+    
+    # --- SHUTDOWN ---
+    print("\n--- Bridge Shutdown ---")
+    task.cancel()
     mt5.shutdown()
+    print("-----------------------")
+
+# --- App Definition ---
+app = FastAPI(title="MT5 Bridge", lifespan=lifespan)
+
+# --- Endpoints ---
 
 @app.post("/execute_signal")
 async def execute_trade(signal: TradeSignal):
+    # Quick checks
     if not mt5.terminal_info():
-        if not initialize_mt5():
-             raise HTTPException(status_code=500, detail="MT5 not connected")
-
-    if not ensure_symbol(signal.symbol):
-        raise HTTPException(status_code=400, detail=f"Symbol {signal.symbol} not found")
-
-    # Prepare Order
+        raise HTTPException(status_code=500, detail="MT5 Disconnected")
+    
+    # Filling Mode Fix
     symbol_info = mt5.symbol_info(signal.symbol)
     if not symbol_info:
-        raise HTTPException(status_code=400, detail="Symbol info not found")
+        raise HTTPException(status_code=400, detail="Symbol not found")
 
-    point = symbol_info.point
+    filling_mode = mt5.ORDER_FILLING_FOK
+    if symbol_info.filling_mode == mt5.SYMBOL_FILLING_IOC:
+        filling_mode = mt5.ORDER_FILLING_IOC
+
+    # Price & SL/TP
     tick = mt5.symbol_info_tick(signal.symbol)
     if not tick:
-        raise HTTPException(status_code=500, detail="Failed to get tick data")
-        
-    price = tick.ask if signal.action == "buy" else tick.bid
+        raise HTTPException(status_code=500, detail="No price data")
     
-    # Calculate SL/TP prices
+    price = tick.ask if signal.action == "buy" else tick.bid
+    point = symbol_info.point
+    
+    sl_offset = signal.sl_points * point
+    tp_offset = signal.tp_points * point
+    
     if signal.action == "buy":
         order_type = mt5.ORDER_TYPE_BUY
-        sl = price - (signal.sl_points * point)
-        tp = price + (signal.tp_points * point)
+        sl = price - sl_offset
+        tp = price + tp_offset
     else:
         order_type = mt5.ORDER_TYPE_SELL
-        sl = price + (signal.sl_points * point)
-        tp = price - (signal.tp_points * point)
+        sl = price + sl_offset
+        tp = price - tp_offset
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
@@ -196,40 +178,22 @@ async def execute_trade(signal: TradeSignal):
         "magic": signal.magic,
         "comment": signal.comment,
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": filling_mode,
     }
 
-    # Execute
     result = mt5.order_send(request)
     
-    if result is None:
-         raise HTTPException(status_code=500, detail="Order send returned None")
-         
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"❌ Order failed: {result.comment} ({result.retcode})")
-        raise HTTPException(status_code=500, detail=f"MT5 Error: {result.comment}")
+    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
+        msg = result.comment if result else "Unknown"
+        print(f"❌ Exec Failed: {msg}")
+        raise HTTPException(status_code=500, detail=msg)
 
-    print(f"✅ Trade Executed: {signal.action.upper()} {signal.volume} {signal.symbol} @ {price}")
-    return {
-        "status": "success",
-        "order_id": result.order,
-        "price": result.price,
-        "comment": result.comment
-    }
-
-@app.get("/health")
-def health_check():
-    info = mt5.terminal_info()
-    return {
-        "status": "online", 
-        "mt5_connected": info is not None if info else False,
-        "account": MT5_LOGIN
-    }
+    print(f"✅ TRADE: {signal.action.upper()} {signal.volume} @ {price}")
+    return {"order_id": result.order, "price": result.price}
 
 @app.get("/account_info")
 def get_account_info():
-    if not mt5.terminal_info():
-        return {"status": "disconnected"}
+    if not mt5.terminal_info(): return {"status": "disconnected"}
     
     account = mt5.account_info()
     positions = mt5.positions_get(symbol=SYMBOL)
