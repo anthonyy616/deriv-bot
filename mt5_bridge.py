@@ -9,18 +9,19 @@ import json
 import time
 from datetime import datetime
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
 # Load environment variables
 load_dotenv()
 
 # Configuration
-MT5_LOGIN = int(os.getenv("MT5_LOGIN", 0))
-MT5_PASSWORD = os.getenv("MT5_PASSWORD", "")
-MT5_SERVER = os.getenv("MT5_SERVER", "Weltrade-Live")
-MT5_PATH = os.getenv("MT5_PATH", r"C:\Program Files\MetaTrader 5\terminal64.exe")
-SIGNAL_SERVER_URL = os.getenv("SIGNAL_SERVER_URL", "http://localhost:8000")
+# Load variables
+LOGIN = int(os.getenv("MT5_LOGIN"))
+PASSWORD = os.getenv("MT5_PASSWORD")
+SERVER = os.getenv("MT5_SERVER")
+PATH = os.getenv("MT5_PATH")
 BRIDGE_PORT = int(os.getenv("BRIDGE_PORT", 8001))
-SYMBOL = "Volatility 20 Index"  # Default symbol to stream
+SYMBOL = "FX Vol 20" # Ensure this matches your broker's symbol name EXACTLY
 
 app = FastAPI(title="MT5 Bridge")
 
@@ -118,17 +119,39 @@ async def tick_stream_loop():
 
 # --- API Endpoints ---
 
-@app.on_event("startup")
-async def startup_event():
-    if initialize_mt5():
-        asyncio.create_task(tick_stream_loop())
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 1. Initialize with the specific path to your Weltrade terminal
+    if not mt5.initialize(path=PATH):
+        print(f"Error initializing: {mt5.last_error()}")
+        # Create a visual/audible alert here if needed
     else:
-        print("CRITICAL: Failed to initialize MT5 on startup.")
+        print(f"MT5 Initialized at: {PATH}")
 
-@app.on_event("shutdown")
-def shutdown_event():
+    # 2. Check if we are ALREADY logged in to the correct account
+    current_account = mt5.account_info()
+    
+    if current_account and current_account.login == LOGIN:
+        print(f"✅ Already logged in as {LOGIN}. Skipping re-login.")
+    else:
+        print(f"⚠️ Not logged in or wrong account. Attempting login for {LOGIN}...")
+        authorized = mt5.login(LOGIN, password=PASSWORD, server=SERVER)
+        if not authorized:
+            print(f"❌ Failed to login: {mt5.last_error()}")
+    
+    # 3. FORCE the symbol to appear in Market Watch
+    # This fixes the "assets disappear" issue
+    symbol_found = mt5.symbol_select(SYMBOL, True)
+    if symbol_found:
+        print(f"✅ Symbol '{SYMBOL}' successfully added to Market Watch.")
+    else:
+        print(f"❌ Could not find symbol '{SYMBOL}'. Check the name in MT5 (Ctrl+U).")
+
+    yield # Application runs here
+
+    # Shutdown logic (optional, keeping it open is usually better for bots)
+    print("Shutting down bridge...")
     mt5.shutdown()
-    print("MT5 connection closed.")
 
 @app.post("/execute_signal")
 async def execute_trade(signal: TradeSignal):
