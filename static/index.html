@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Deriv Trade Bot</title>
+    <title>Weltrade MT5 Bot</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
@@ -242,270 +242,245 @@
     </style>
 </head>
 
-<body class="p-4 md:p-8 font-sans">
-    <!-- Login Modal -->
-    <div id="login-modal" class="modal-overlay">
-        <div class="modal-content space-y-4">
-            <h2 class="text-xl font-bold text-center mb-4">Weltrade MT5 Bot</h2>
+<body
+    class="p-4 md:p-8 font-sans bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 transition-colors duration-300">
 
-            <!-- Login Form -->
+    <div id="login-modal"
+        class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+        <div
+            class="bg-white dark:bg-slate-800 p-8 rounded-lg shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-700">
+            <h2 class="text-2xl font-bold text-center mb-6 text-blue-500">Weltrade MT5 Bot</h2>
             <form id="form-login" onsubmit="handleSupabaseLogin(event)" class="space-y-4">
                 <div>
-                    <label class="block text-sm font-medium mb-1 text-secondary">Email</label>
-                    <input type="email" id="email" class="input" required placeholder="you@example.com">
+                    <label class="block text-sm font-medium mb-1 text-slate-500 dark:text-slate-400">Email</label>
+                    <input type="email" id="email"
+                        class="w-full p-2 rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 focus:outline-none"
+                        required placeholder="you@example.com">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1 text-secondary">Password</label>
-                    <input type="password" id="password" class="input" required placeholder="••••••••">
+                    <label class="block text-sm font-medium mb-1 text-slate-500 dark:text-slate-400">Password</label>
+                    <input type="password" id="password"
+                        class="w-full p-2 rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 focus:outline-none"
+                        required placeholder="••••••••">
                 </div>
-                <button type="submit" class="btn btn-primary w-full">Login / Sign Up</button>
-                <p class="text-xs text-center text-muted">If no account exists, one will be created.</p>
+                <button type="submit"
+                    class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition">Login
+                    / Connect</button>
             </form>
-
-            <p id="login-error" class="text-red-500 text-sm text-center hidden"></p>
+            <p id="login-error" class="text-red-500 text-sm text-center mt-4 hidden"></p>
         </div>
     </div>
 
-    <div class="max-w-6xl mx-auto space-y-4 md:space-y-8">
-        <!-- Header -->
-        <div class="header-section flex items-center justify-between">
+    <div class="max-w-6xl mx-auto space-y-6">
+        <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div>
-                <h1 class="text-2xl md:text-3xl font-bold tracking-tight text-blue-500">Weltrade MT5 Bot</h1>
-                <p class="text-sm md:text-base text-muted">High-Frequency Grid Trading Terminal</p>
+                <h1 class="text-2xl md:text-3xl font-bold text-blue-500">Weltrade MT5 Bot</h1>
+                <p class="text-sm text-slate-500 dark:text-slate-400">Auto-Grid Strategy Engine</p>
             </div>
-            <div class="header-controls flex items-center gap-2 md:gap-4">
 
-                <button id="theme-btn" class="btn-theme" onclick="toggleTheme()">
-                    <span id="theme-text">Light Mode</span>
+            <div class="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end">
+                <button id="theme-btn"
+                    class="px-3 py-1.5 text-xs font-medium bg-slate-200 dark:bg-slate-800 rounded hover:bg-slate-300 dark:hover:bg-slate-700 transition"
+                    onclick="toggleTheme()">
+                    Theme
                 </button>
+
                 <div id="status-badge"
-                    class="flex items-center gap-2 rounded-full px-3 py-1.5 text-xs md:text-sm font-medium bg-slate-800 text-slate-400">
+                    class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                     <div class="h-2 w-2 rounded-full bg-slate-400"></div>
-                    <span class="hidden sm:inline">Connecting...</span>
-                    <span class="sm:hidden">...</span>
+                    <span>Offline</span>
                 </div>
-                <button id="toggle-btn" class="btn btn-success" onclick="toggleBot()">
-                    <span class="hidden sm:inline">Start Bot</span>
-                    <span class="sm:hidden">Start</span>
+
+                <button id="toggle-btn"
+                    class="px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded transition"
+                    onclick="toggleBot()">
+                    Start Bot
                 </button>
 
-                <!-- User Menu -->
-                <div class="relative group">
-                    <button class="btn btn-danger text-xs flex items-center gap-1">
-                        <span class="hidden sm:inline">Account</span>
-                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7">
-                            </path>
-                        </svg>
+                <div class="relative">
+                    <button onclick="toggleUserMenu()"
+                        class="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-xs font-medium rounded border border-red-500/20 flex items-center gap-1">
+                        Account ▾
                     </button>
-                    <div
-                        class="absolute right-0 mt-2 w-48 bg-white dark:bg-slate-800 rounded-md shadow-lg py-1 hidden group-hover:block border border-slate-200 dark:border-slate-700 z-50">
-                        <a href="#" onclick="logout()"
-                            class="block px-4 py-2 text-sm text-red-500 hover:bg-slate-100 dark:hover:bg-slate-700">Logout</a>
+                    <div id="user-menu"
+                        class="dropdown-menu absolute right-0 mt-2 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden">
+                        <button onclick="logout()"
+                            class="w-full text-left px-4 py-3 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-slate-700 transition">
+                            Sign Out
+                        </button>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Stats Grid -->
-        <div class="stats-grid grid gap-3 md:gap-4 grid-cols-2 lg:grid-cols-4">
-            <div class="card">
-                <div class="text-xs md:text-sm font-medium text-muted">Current Price</div>
-                <div id="price" class="stat-value text-xl md:text-2xl font-bold mt-1">---</div>
-                <div id="symbol-display" class="text-xs text-secondary mt-1">---</div>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Live Price</div>
+                <div id="price" class="text-2xl font-bold mt-1 tracking-tight">---</div>
+                <div id="symbol-display" class="text-xs text-blue-500 font-mono mt-1">FX Vol 20</div>
             </div>
-            <div class="card">
-                <div class="text-xs md:text-sm font-medium text-muted">Active Positions</div>
-                <div class="stat-value text-xl md:text-2xl font-bold mt-1">
+            <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Positions</div>
+                <div class="text-2xl font-bold mt-1">
                     <span id="pos-count">0</span>
-                    <span class="text-sm text-secondary font-normal">/ <span id="max-pos-display">5</span></span>
+                    <span class="text-sm text-slate-500 font-normal">/ <span id="max-pos-display">5</span></span>
                 </div>
             </div>
-            <div class="card">
-                <div class="text-xs md:text-sm font-medium text-muted">Pending Orders</div>
-                <div id="pending-count" class="stat-value text-xl md:text-2xl font-bold mt-1">0</div>
+            <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Pending Orders</div>
+                <div id="pending-count" class="text-2xl font-bold mt-1">0</div>
             </div>
-            <div class="card">
-                <div class="text-xs md:text-sm font-medium text-muted">Spread Setting</div>
-                <div id="spread-display" class="stat-value text-xl md:text-2xl font-bold mt-1">---</div>
+            <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Drawdown</div>
+                <div id="drawdown-display" class="text-2xl font-bold mt-1 text-red-500">$0.00</div>
             </div>
         </div>
 
-        <!-- Main Content -->
-        <div class="main-grid grid gap-4 md:gap-8 md:grid-cols-3">
-            <!-- Settings -->
-            <div class="card md:col-span-1 h-fit">
-                <h2 class="text-lg md:text-xl font-semibold mb-1">Configuration</h2>
-                <p class="text-xs md:text-sm text-muted mb-3 md:mb-4">Update bot parameters live.</p>
+        <div class="grid md:grid-cols-3 gap-6">
+            <div
+                class="md:col-span-1 bg-white dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 h-fit">
+                <h2 class="text-lg font-semibold mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Strategy
+                    Config</h2>
+                <form id="config-form" onsubmit="updateConfig(event)" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-medium mb-1.5 text-slate-500">Asset Symbol</label>
+                        <input type="text" id="symbol"
+                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
+                            value="FX Vol 20">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium mb-1.5 text-slate-500">Spread (Points)</label>
+                        <input type="number" id="spread"
+                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
+                            value="100">
+                    </div>
 
-                <form id="config-form" onsubmit="updateConfig(event)" class="space-y-3 md:space-y-4">
-                    <div>
-                        <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Asset</label>
-                        <input type="text" id="symbol" class="input text-sm md:text-base" value="Volatility 20 Index"
-                            placeholder="e.g. Volatility 20 Index">
-                    </div>
-                    <div>
-                        <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Spread
-                            (Points)</label>
-                        <input type="number" id="spread" class="input text-sm md:text-base" step="1">
-                    </div>
-                    <div>
-                        <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Max Positions</label>
-                        <input type="number" id="max_positions" class="input text-sm md:text-base">
-                    </div>
-                    <div>
-                        <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Lot Size
-                            (volume)</label>
-                        <input type="number" id="lot_size" class="input text-sm md:text-base" step="0.01"
-                            placeholder="0.01">
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-2 gap-3">
                         <div>
-                            <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Max Runtime
-                                (Min)</label>
-                            <input type="number" id="max_runtime_minutes" class="input text-sm md:text-base"
-                                placeholder="0 = Infinite">
+                            <label class="block text-xs font-medium mb-1.5 text-slate-500">Max Positions</label>
+                            <input type="number" id="max_positions"
+                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
+                                value="7">
                         </div>
                         <div>
-                            <label class="block text-xs md:text-sm font-medium mb-1 text-secondary">Risk %</label>
-                            <input type="number" id="risk_percent" class="input text-sm md:text-base" step="0.1"
-                                placeholder="0.5">
+                            <label class="block text-xs font-medium mb-1.5 text-slate-500">Lot Size</label>
+                            <input type="number" id="lot_size"
+                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
+                                step="0.01" value="0.01">
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primary w-full">Save Changes</button>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-medium mb-1.5 text-slate-500">Max Runtime (Min)</label>
+                            <input type="number" id="max_runtime_minutes"
+                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
+                                placeholder="0 (Infinite)">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium mb-1.5 text-red-400">Max Drawdown ($)</label>
+                            <input type="number" id="max_drawdown_usd"
+                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-red-900/30 focus:border-red-500 outline-none"
+                                step="1" placeholder="50">
+                        </div>
+                    </div>
+
+                    <button type="submit"
+                        class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition">Update
+                        Settings</button>
                 </form>
             </div>
 
-            <!-- Activity Log -->
-            <div class="card md:col-span-2">
-                <h2 class="text-lg md:text-xl font-semibold mb-1">Live Activity</h2>
-                <p class="text-xs md:text-sm text-muted mb-3 md:mb-4">Real-time market and order updates.</p>
-                <div class="logs-bg rounded p-3 md:p-4 h-48 md:h-64 overflow-y-auto font-mono text-xs md:text-sm logs-text"
-                    id="logs">
-                    <div>[System] Dashboard initialized. Waiting for login...</div>
+            <div
+                class="md:col-span-2 bg-white dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col">
+                <h2 class="text-lg font-semibold mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Live
+                    Terminal Log</h2>
+                <div id="logs"
+                    class="flex-1 bg-slate-50 dark:bg-slate-950 rounded p-4 font-mono text-xs overflow-y-auto h-80 space-y-1 text-green-600 dark:text-green-400">
+                    <div>[System] Dashboard ready. Waiting for connection...</div>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        let isRunning = false;
+        // --- State & Config ---
         let sessionId = localStorage.getItem('session_id');
         let supabase = null;
-        let currentUserId = null;
+        let updateInterval = null;
 
-        // Init Supabase
+        // --- Theme Logic ---
+        function initTheme() {
+            if (localStorage.getItem('theme') === 'light') {
+                document.documentElement.classList.remove('dark');
+            } else {
+                document.documentElement.classList.add('dark');
+            }
+        }
+        function toggleTheme() {
+            document.documentElement.classList.toggle('dark');
+            localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+        }
+
+        // --- Auth Logic ---
         async function initSupabase() {
             try {
                 const res = await fetch('/env');
                 const env = await res.json();
                 if (env.SUPABASE_URL && env.SUPABASE_KEY) {
                     supabase = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
-                    console.log("Supabase initialized");
-
-                    // Check for existing session
-                    const { data: { session } } = await supabase.auth.getSession();
-                    if (session) {
-                        console.log("Existing session found, auto-reconnecting...");
-                        currentUserId = session.user.id;
-                        await connectToBot();
+                    const { data } = await supabase.auth.getSession();
+                    if (data.session) {
+                        // Valid Supabase session
+                        if (!sessionId) {
+                            // If we have Supabase auth but no bot session, connect now
+                            await connectToBot();
+                        } else {
+                            startPolling();
+                        }
                     } else {
-                        checkLogin();
+                        showLogin();
                     }
                 } else {
-                    console.warn("Supabase credentials not found.");
-                    checkLogin();
+                    console.log("Supabase not configured, running in local mode.");
+                    // In local mode, just start if we have a session ID, else simulate login
+                    if (sessionId) startPolling(); else showLogin();
                 }
             } catch (e) {
-                console.error("Failed to load env:", e);
-                checkLogin();
+                console.error("Init Error:", e);
+                showLogin();
             }
         }
 
-        // Theme Logic
-        function toggleTheme() {
-            const html = document.documentElement;
-            const text = document.getElementById('theme-text');
-            if (html.classList.contains('dark')) {
-                html.classList.remove('dark');
-                text.textContent = 'Dark Mode';
-                localStorage.setItem('theme', 'light');
-            } else {
-                html.classList.add('dark');
-                text.textContent = 'Light Mode';
-                localStorage.setItem('theme', 'dark');
-            }
+        function showLogin() {
+            document.getElementById('login-modal').classList.remove('hidden');
         }
 
-        // Init Theme
-        if (!localStorage.getItem('theme')) {
-            localStorage.setItem('theme', 'dark');
-        }
-        if (localStorage.getItem('theme') === 'light') {
-            document.documentElement.classList.remove('dark');
-            document.getElementById('theme-text').textContent = 'Dark Mode';
-        }
-
-        function checkLogin() {
-            const modal = document.getElementById('login-modal');
-            if (!sessionId) {
-                modal.style.display = 'flex';
-            } else {
-                modal.style.display = 'none';
-                fetchStatus();
-                setInterval(fetchStatus, 1000);
-            }
-        }
-
-        // Auth Logic
         async function handleSupabaseLogin(e) {
             e.preventDefault();
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
-            const errorMsg = document.getElementById('login-error');
-
-            errorMsg.classList.add('hidden');
+            const errorText = document.getElementById('login-error');
+            errorText.classList.add('hidden');
 
             if (!supabase) {
-                errorMsg.textContent = "Supabase not configured.";
-                errorMsg.classList.remove('hidden');
+                // Local Dev Mode Fallback
+                await connectToBot();
                 return;
             }
 
-            try {
-                // 1. Try to Login
-                let { data, error } = await supabase.auth.signInWithPassword({
-                    email: email,
-                    password: password
-                });
-
-                if (error && error.message.includes("Invalid login credentials")) {
-                    // 2. If login fails, try to Register
-                    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-                        email: email,
-                        password: password
-                    });
-
-                    if (signUpError) throw signUpError;
-                    data = signUpData;
-                    log("Account created for " + email);
-                } else if (error) {
-                    throw error;
-                } else {
-                    log("Logged in as " + email);
+            // Attempt Login
+            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+            if (error) {
+                // Attempt Register
+                const { data: upData, error: upError } = await supabase.auth.signUp({ email, password });
+                if (upError) {
+                    errorText.textContent = error.message;
+                    errorText.classList.remove('hidden');
+                    return;
                 }
-
-                if (!data.user) throw new Error("No user returned");
-                currentUserId = data.user.id;
-
-                // Connect to Bot
-                await connectToBot();
-
-            } catch (err) {
-                console.error(err);
-                errorMsg.textContent = "Auth failed: " + err.message;
-                errorMsg.classList.remove('hidden');
             }
+            await connectToBot();
         }
 
         async function connectToBot() {
@@ -513,153 +488,151 @@
                 const res = await fetch('/connect', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: "Trader" })
+                    body: JSON.stringify({ name: "User" })
                 });
-
                 const data = await res.json();
+                sessionId = data.session_id;
+                localStorage.setItem('session_id', sessionId);
+                document.getElementById('login-modal').classList.add('hidden');
+                startPolling();
+                log("Connected to Trading Engine.");
+            } catch (e) {
+                alert("Connection Failed: " + e.message);
+            }
+        }
 
-                if (res.ok) {
-                    sessionId = data.session_id;
-                    localStorage.setItem('session_id', sessionId);
-                    document.getElementById('login-modal').style.display = 'none';
-                    log("Connected to Bot Engine.");
-                    fetchStatus();
-                    setInterval(fetchStatus, 1000);
-                } else {
-                    throw new Error(data.detail || 'Connection failed');
+        function toggleUserMenu() {
+            document.getElementById('user-menu').classList.toggle('show');
+        }
+
+        // Close menu when clicking outside
+        window.onclick = function (event) {
+            if (!event.target.matches('button') && !event.target.closest('.relative')) {
+                var dropdowns = document.getElementsByClassName("dropdown-menu");
+                for (var i = 0; i < dropdowns.length; i++) {
+                    if (dropdowns[i].classList.contains('show')) {
+                        dropdowns[i].classList.remove('show');
+                    }
                 }
-            } catch (error) {
-                console.error("Connect error:", error);
-                throw error;
             }
         }
 
         async function logout() {
-            if (supabase) {
-                await supabase.auth.signOut();
-            }
+            if (supabase) await supabase.auth.signOut();
             localStorage.removeItem('session_id');
-            sessionId = null;
-            currentUserId = null;
             location.reload();
         }
 
-        // --- Bot Control & Status ---
+        // --- Bot Interaction ---
+        function startPolling() {
+            fetchStatus();
+            if (updateInterval) clearInterval(updateInterval);
+            updateInterval = setInterval(fetchStatus, 1000);
+        }
 
         async function fetchStatus() {
             if (!sessionId) return;
             try {
                 const res = await fetch('/status', {
-                    method: 'GET', // Explicitly set method to GET
                     headers: { 'X-Session-ID': sessionId }
                 });
                 if (res.status === 401) {
-                    logout();
+                    // Session invalid
+                    localStorage.removeItem('session_id');
+                    location.reload();
                     return;
                 }
                 const data = await res.json();
-                updateDashboard(data);
+                renderDashboard(data);
             } catch (e) {
-                console.error("Status fetch error:", e);
+                console.error("Poll Error:", e);
             }
         }
 
-        function updateDashboard(data) {
-            isRunning = data.running;
+        function renderDashboard(data) {
+            const isRunning = data.running;
 
-            // Update Badge
+            // Status Badge
             const badge = document.getElementById('status-badge');
             if (isRunning) {
-                badge.className = "flex items-center gap-2 rounded-full px-3 py-1.5 text-xs md:text-sm font-medium bg-green-900 text-green-300";
-                badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-green-400 animate-pulse"></div><span>Running</span>';
+                badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
+                badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div><span>Running</span>';
             } else {
-                badge.className = "flex items-center gap-2 rounded-full px-3 py-1.5 text-xs md:text-sm font-medium bg-slate-800 text-slate-400";
+                badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400";
                 badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-slate-400"></div><span>Stopped</span>';
             }
 
-            // Update Button
+            // Toggle Button
             const btn = document.getElementById('toggle-btn');
-            if (isRunning) {
-                btn.innerHTML = 'Stop Bot';
-                btn.className = "btn btn-danger";
-            } else {
-                btn.innerHTML = 'Start Bot';
-                btn.className = "btn btn-success";
-            }
+            btn.textContent = isRunning ? "Stop Bot" : "Start Bot";
+            btn.className = isRunning
+                ? "px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded transition"
+                : "px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded transition";
 
-            // Update Stats
-            document.getElementById('price').textContent = data.current_price ? data.current_price.toFixed(5) : '---';
-            document.getElementById('symbol-display').textContent = data.symbol || '---';
+            // Stats
+            document.getElementById('price').textContent = data.current_price ? data.current_price.toFixed(5) : "---";
+            document.getElementById('symbol-display').textContent = data.symbol || "---";
             document.getElementById('pos-count').textContent = data.positions_count || 0;
             document.getElementById('pending-count').textContent = data.pending_orders_count || 0;
 
-            // Update Config Display
-            if (data.config) {
-                document.getElementById('spread-display').textContent = data.config.spread || '---';
-                document.getElementById('max-pos-display').textContent = data.config.max_positions || 5;
+            // Calc current drawdown (Balance - Equity if Equity < Balance)
+            // Note: The backend status payload needs to return equity/balance for this to be accurate real-time
+            // For now, we rely on the backend provided info or placeholder
+            // document.getElementById('drawdown-display').textContent = ... 
 
-                // Pre-fill form if empty
-                if (!document.getElementById('symbol').value) document.getElementById('symbol').value = data.config.symbol;
-                if (!document.getElementById('spread').value) document.getElementById('spread').value = data.config.spread;
-                if (!document.getElementById('max_positions').value) document.getElementById('max_positions').value = data.config.max_positions;
-                if (!document.getElementById('lot_size').value) document.getElementById('lot_size').value = data.config.lot_size;
-                if (!document.getElementById('max_runtime_minutes').value) document.getElementById('max_runtime_minutes').value = data.config.max_runtime_minutes;
-                if (!document.getElementById('risk_percent').value) document.getElementById('risk_percent').value = data.config.risk_percent;
+            // Config Sync (Only if input is not focused to avoid jumping values)
+            if (data.config && document.activeElement.tagName !== "INPUT") {
+                if (data.config.symbol) document.getElementById('symbol').value = data.config.symbol;
+                if (data.config.spread) document.getElementById('spread').value = data.config.spread;
+                if (data.config.max_positions) document.getElementById('max_positions').value = data.config.max_positions;
+                if (data.config.lot_size) document.getElementById('lot_size').value = data.config.lot_size;
+                if (data.config.max_runtime_minutes) document.getElementById('max_runtime_minutes').value = data.config.max_runtime_minutes;
+                if (data.config.max_drawdown_usd) document.getElementById('max_drawdown_usd').value = data.config.max_drawdown_usd;
+
+                // Max positions display
+                document.getElementById('max-pos-display').textContent = data.config.max_positions;
             }
         }
 
         async function toggleBot() {
-            const endpoint = isRunning ? '/control/stop' : '/control/start';
-            try {
-                const res = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: { 'X-Session-ID': sessionId }
-                });
-                const data = await res.json();
-                log(data.message);
-                fetchStatus();
-            } catch (e) {
-                log("Error toggling bot: " + e.message);
-            }
+            const btn = document.getElementById('toggle-btn');
+            const isStop = btn.textContent.includes("Stop");
+            const endpoint = isStop ? '/control/stop' : '/control/start';
+            await fetch(endpoint, { method: 'POST', headers: { 'X-Session-ID': sessionId } });
+            fetchStatus(); // Immediate update
         }
 
         async function updateConfig(e) {
             e.preventDefault();
-            const config = {
+            const payload = {
                 symbol: document.getElementById('symbol').value,
-                spread: parseFloat(document.getElementById('spread').value),
-                max_positions: parseInt(document.getElementById('max_positions').value),
-                lot_size: parseFloat(document.getElementById('lot_size').value),
-                max_runtime_minutes: parseInt(document.getElementById('max_runtime_minutes').value),
-                risk_percent: parseFloat(document.getElementById('risk_percent').value || 0)
+                spread: Number(document.getElementById('spread').value),
+                max_positions: Number(document.getElementById('max_positions').value),
+                lot_size: Number(document.getElementById('lot_size').value),
+                max_runtime_minutes: Number(document.getElementById('max_runtime_minutes').value),
+                max_drawdown_usd: Number(document.getElementById('max_drawdown_usd').value)
             };
 
-            try {
-                const res = await fetch('/config', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Session-ID': sessionId
-                    },
-                    body: JSON.stringify(config)
-                });
-                log("Configuration updated.");
-                fetchStatus();
-            } catch (e) {
-                log("Config update failed: " + e.message);
-            }
+            await fetch('/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Session-ID': sessionId },
+                body: JSON.stringify(payload)
+            });
+            log("Configuration updated.");
+            fetchStatus();
         }
 
         function log(msg) {
-            const logs = document.getElementById('logs');
-            const div = document.createElement('div');
-            const time = new Date().toLocaleTimeString();
-            div.textContent = `[${time}] ${msg}`;
-            logs.prepend(div);
+            const el = document.getElementById('logs');
+            const row = document.createElement('div');
+            row.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            el.prepend(row);
         }
 
-        // Start
+        // Init
+        initTheme();
         initSupabase();
+
     </script>
 </body>
 

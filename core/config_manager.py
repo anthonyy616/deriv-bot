@@ -10,14 +10,14 @@ class ConfigManager:
 
     def load_config(self):
         default_config = {
-            "symbol": "R_75",
-            "spread": 8,
-            "tp_dist": 16,
-            "sl_dist": 24,
-            "max_positions": 7,
-            "lot_size": 10,  # $10 stake per trade
+            "symbol": "FX Vol 20",
+            "spread": 100,
+            "tp_dist": 160,
+            "sl_dist": 240,
+            "max_positions": 5,
+            "lot_size": 0.01,
             "max_runtime_minutes": 0,  # 0 = Infinite
-            "max_drawdown_usd": 0      # 0 = Disabled
+            "max_drawdown_usd": 50.0   # Default $50 drawdown limit
         }
         
         if not os.path.exists(self.config_file):
@@ -36,7 +36,7 @@ class ConfigManager:
             with open(self.config_file, 'w') as f:
                 json.dump(config, f, indent=4)
             self.config = config
-            logging.info("Configuration saved.")
+            logging.info(f"Configuration saved for {self.user_id}")
         except Exception as e:
             logging.error(f"Error saving config: {e}")
 
@@ -44,7 +44,6 @@ class ConfigManager:
         return self.config
 
     def update_config(self, new_config):
-        # Update only provided keys
         self.config.update(new_config)
         self.save_config(self.config)
         return self.config

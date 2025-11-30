@@ -9,15 +9,13 @@ class GridStrategy:
         self.config_manager = config_manager
         self.symbol = config_manager.get_config().get('symbol', 'FX Vol 20')
         self.cmp = None
-        self.pending_orders = [] # Virtual Pending Orders
-        self.positions = []      # Tracked Open Positions
+        self.pending_orders = [] 
+        self.positions = []      
         self.running = False
         self.iteration = 0
         self.iteration_state = "idle"
         self.start_time = 0
         self.initial_balance = 0
-        
-        # Bridge URL
         self.mt5_bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
         
     @property
@@ -35,38 +33,26 @@ class GridStrategy:
         self.positions = []
         self.iteration_state = "idle"
         
-        # Get Initial Balance for Drawdown Calc
         self.initial_balance = self.get_account_balance()
-        print(f"✅ Strategy Started. Symbol: {self.symbol} | Balance: {self.initial_balance}")
+        print(f"✅ Strategy Started. Symbol: {self.symbol} | Start Balance: {self.initial_balance}")
         
         asyncio.create_task(self.main_loop())
 
     async def main_loop(self):
-        """Background loop for time/risk checks."""
         while self.running:
-            await asyncio.sleep(1) # Check every second
-            
-            # 1. Check Stopping Conditions
+            await asyncio.sleep(1)
             if self.check_stopping_conditions():
                 await self.stop()
                 break
 
     async def on_external_tick(self, tick_data):
-        """Called by API Server when Bridge pushes a tick."""
-        if not self.running:
-            return
+        if not self.running: return
+        if tick_data['symbol'] != self.symbol: return
 
-        # 1. Validate Symbol
-        if tick_data['symbol'] != self.symbol:
-            # print(f"Ignored tick for {tick_data['symbol']}, expecting {self.symbol}")
-            return
-
-        # 2. Update State
-        price = tick_data['ask'] # Using ASK for logic simplicity
+        price = tick_data['ask']
         point = tick_data.get('point', 0.001)
         self.cmp = price
         
-        # 3. Process Grid Logic
         await self.process_strategy(price, point)
 
     async def process_strategy(self, price, point):
@@ -79,35 +65,23 @@ class GridStrategy:
         # STAGE 2: Check Virtual Triggers
         if self.iteration_state == "active":
             triggered_order = None
-            
             for order in self.pending_orders:
-                # BUY STOP Trigger: Price rises ABOVE order price
                 if order['type'] == 'BUY_STOP' and price >= order['price']:
-                    triggered_order = order
-                    break
-                # SELL STOP Trigger: Price falls BELOW order price
+                    triggered_order = order; break
                 elif order['type'] == 'SELL_STOP' and price <= order['price']:
-                    triggered_order = order
-                    break
+                    triggered_order = order; break
             
             if triggered_order:
-                # OCO Logic: Clear all pending orders immediately
                 self.pending_orders.clear()
                 print(f"⚡ TRIGGER: {triggered_order['type']} at {price}")
-                
-                # Execute Trade & Place Next Bracket
                 await self.execute_trade_and_chain(triggered_order, price, point)
 
     async def place_brackets(self, anchor_price, point, is_initial=False):
-        """Calculates and stores virtual pending orders."""
         spread_pts = self.config.get('spread', 100)
         spread_price = spread_pts * point
-
-        # Distances for SL/TP
         sl_pts = self.config.get('sl_dist', 240)
         tp_pts = self.config.get('tp_dist', 160)
         
-        # Calculate Levels
         buy_price = anchor_price + spread_price
         sell_price = anchor_price - spread_price
         
@@ -118,91 +92,72 @@ class GridStrategy:
         
         if is_initial:
             print(f"🎯 Initial Grid Placed: Buy@{buy_price:.5f} | Sell@{sell_price:.5f}")
-        else:
-            print(f"📍 New Chain Grid Placed around {anchor_price:.5f}")
 
     async def execute_trade_and_chain(self, order, current_price, point):
-        """Executes the market order and sets up the next grid level."""
-        
-        # 1. Prepare Payload
         action = "buy" if order['type'] == 'BUY_STOP' else "sell"
         volume = self.config.get('lot_size', 0.01)
         
         payload = {
-            "action": action,
-            "symbol": self.symbol,
-            "volume": volume,
-            "sl_points": int(order['sl']),
-            "tp_points": int(order['tp']),
+            "action": action, "symbol": self.symbol, "volume": volume,
+            "sl_points": int(order['sl']), "tp_points": int(order['tp']),
             "comment": f"Grid-Itr-{self.iteration}"
         }
         
-        # 2. Send to Bridge (Market Execution)
         try:
-            # Using requests (sync) for reliability in this specific block
             response = requests.post(f"{self.mt5_bridge_url}/execute_signal", json=payload, timeout=2)
-            
             if response.status_code == 200:
                 data = response.json()
                 print(f"✅ Trade OPENED: {data.get('order_id')}")
-                
-                # Track Position
                 self.positions.append(data)
                 self.iteration += 1
                 
-                # 3. Check Max Positions
                 if len(self.positions) < self.config.get('max_positions', 5):
-                    # Place NEXT bracket around the execution price
                     await self.place_brackets(data.get('price', current_price), point)
                 else:
-                    print("🛑 Max positions reached. Waiting for trades to close...")
+                    print("🛑 Max positions reached.")
                     self.iteration_state = "max_cap_reached"
-                    
             else:
                 print(f"❌ Execution Failed: {response.text}")
-                # Reset to idle to try again?
                 self.iteration_state = "idle"
-                
         except Exception as e:
             print(f"❌ Bridge Connection Error: {e}")
 
     def check_stopping_conditions(self):
-        """Checks Time and Drawdown limits."""
         # 1. Time Check
-        max_mins = self.config.get('max_runtime_minutes', 60)
+        max_mins = self.config.get('max_runtime_minutes', 0)
         if max_mins > 0:
             elapsed = (time.time() - self.start_time) / 60
             if elapsed >= max_mins:
-                print(f"⏰ Time Limit Reached ({elapsed:.1f} / {max_mins} mins). Stopping.")
+                print(f"⏰ Time Limit Reached. Stopping.")
                 return True
 
         # 2. Drawdown Check
         max_dd = self.config.get('max_drawdown_usd', 0)
         if max_dd > 0:
+            current_balance = self.get_account_balance()
+            # Drawdown = Initial Balance - Current Balance (simpler for now, strictly realizing loss logic)
+            # OR logic: Equity based?
             current_equity = self.get_account_equity()
-            # Drawdown = Initial Balance - Current Equity
-            # (Simple calculation, implies we start flat)
+            
+            # Use Equity for active drawdown monitoring
             if current_equity > 0:
                 drawdown = self.initial_balance - current_equity
                 if drawdown >= max_dd:
-                    print(f"📉 Max Drawdown Reached (-${drawdown:.2f}). Stopping.")
+                    print(f"📉 Max Drawdown Reached (-${drawdown:.2f} >= ${max_dd}). Stopping.")
                     return True
-        
         return False
 
     def get_account_balance(self):
         try:
             res = requests.get(f"{self.mt5_bridge_url}/account_info", timeout=1)
             return res.json().get('balance', 0)
-        except:
-            return 0
+        except: return 0
 
     def get_account_equity(self):
         try:
             res = requests.get(f"{self.mt5_bridge_url}/account_info", timeout=1)
             return res.json().get('equity', 0)
-        except:
-            return 0
+        except: return 0
 
     def get_status(self):
         return {
@@ -210,7 +165,7 @@ class GridStrategy:
             "symbol": self.symbol,
             "current_price": self.cmp,
             "positions_count": len(self.positions),
-            "pending_orders_count": len(self.pending_orders), # Shows virtual orders
+            "pending_orders_count": len(self.pending_orders),
             "config": self.config,
             "iteration": self.iteration,
             "state": self.iteration_state
