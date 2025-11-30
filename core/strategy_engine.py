@@ -82,35 +82,23 @@ class GridStrategy:
                 await self.execute_trade_and_chain(triggered_order, ask, bid, point)
 
     async def place_brackets(self, ask, bid, point, is_initial=False):
-        """Calculates distances using User Pips ($1) and enforces 2x Spread Rule."""
+        """Calculates distances using User Pips ($1). NO FORCED SPREAD LOGIC."""
         
-        # 1. Calculate Market Spread in Price Units ($)
-        market_spread_usd = ask - bid
-        
-        # 2. Get User Configuration ($)
+        # 1. Get User Configuration ($)
         user_spread_usd = self.config.get('spread', 8)
         
-        # 3. Enforce 2x Spread Rule
-        # "The spread the user sets always has to be 2x this value"
-        required_min_spread = market_spread_usd * 2
+        # 2. DIRECTLY use the user's spread (No 2x Rule)
+        # We trust the user knows what they are doing.
+        final_spread_usd = user_spread_usd
         
-        # Dynamic Spread: Use the larger of the two
-        final_spread_usd = max(user_spread_usd, required_min_spread)
-        
-        # Log if we overrode the user
-        if final_spread_usd > user_spread_usd:
-             if is_initial: # Only log once to avoid spam
-                print(f"⚠️ Market Spread is wide (${market_spread_usd:.2f}). Enforcing 2x rule: Spread increased from ${user_spread_usd} to ${final_spread_usd:.2f}")
+        if is_initial:
+            print(f"🎯 Grid Placed. Gap: ${final_spread_usd:.2f} (User Defined)")
 
-        # 4. Calculate Levels (Price)
+        # 3. Calculate Levels (Price)
         buy_stop_price = ask + final_spread_usd
         sell_stop_price = bid - final_spread_usd
         
-        # 5. Calculate SL/TP Distances (Convert $ -> Points)
-        # Bridge expects INTEGERS (Points). 
-        # Formula: Price_Distance / Point_Value
-        # Example: $24.00 / 0.01 = 2400 Points
-        
+        # 4. Calculate SL/TP Distances (Convert $ -> Points)
         sl_usd = self.config.get('sl_dist', 24)
         tp_usd = self.config.get('tp_dist', 16)
         
@@ -123,7 +111,7 @@ class GridStrategy:
         ]
         
         if is_initial:
-            print(f"🎯 Grid Placed. Gap: ${final_spread_usd:.2f} | Buy: {buy_stop_price:.2f} | Sell: {sell_stop_price:.2f}")
+            print(f"   Buy Stop: {buy_stop_price:.2f} | Sell Stop: {sell_stop_price:.2f}")
 
     async def execute_trade_and_chain(self, order, ask, bid, point):
         action = "buy" if order['type'] == 'BUY_STOP' else "sell"
