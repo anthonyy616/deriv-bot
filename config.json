@@ -1,9 +1,11 @@
 {
-    "symbol": "FX20",
+    "symbol": "FX Vol 20",
     "spread": 100,
     "tp_dist": 160,
     "sl_dist": 240,
     "max_positions": 5,
     "lot_size": 0.01,
-    "risk_percent": 0.5
+    "risk_percent": 0.5,
+    "max_drawdown_usd": 50.0,
+    "max_runtime_minutes": 60
 }
