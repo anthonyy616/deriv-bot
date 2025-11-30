@@ -7,6 +7,7 @@ import requests
 import os
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
+import traceback
 
 # Load environment variables
 load_dotenv()
@@ -132,65 +133,92 @@ app = FastAPI(title="MT5 Bridge", lifespan=lifespan)
 # --- Endpoints ---
 
 @app.post("/execute_signal")
+@app.post("/execute_signal")
 async def execute_trade(signal: TradeSignal):
-    # Quick checks
-    if not mt5.terminal_info():
-        raise HTTPException(status_code=500, detail="MT5 Disconnected")
-    
-    # Filling Mode Fix
-    symbol_info = mt5.symbol_info(signal.symbol)
-    if not symbol_info:
-        raise HTTPException(status_code=400, detail="Symbol not found")
+    try:
+        # 1. Check Connection
+        if not mt5.terminal_info():
+            raise HTTPException(status_code=500, detail="MT5 Disconnected")
 
-    filling_mode = mt5.ORDER_FILLING_FOK
-    if symbol_info.filling_mode == mt5.SYMBOL_FILLING_IOC:
-        filling_mode = mt5.ORDER_FILLING_IOC
+        # 2. Get Symbol Info
+        symbol_info = mt5.symbol_info(signal.symbol)
+        if not symbol_info:
+            raise HTTPException(status_code=400, detail=f"Symbol '{signal.symbol}' not found")
 
-    # Price & SL/TP
-    tick = mt5.symbol_info_tick(signal.symbol)
-    if not tick:
-        raise HTTPException(status_code=500, detail="No price data")
-    
-    price = tick.ask if signal.action == "buy" else tick.bid
-    point = symbol_info.point
-    
-    sl_offset = signal.sl_points * point
-    tp_offset = signal.tp_points * point
-    
-    if signal.action == "buy":
-        order_type = mt5.ORDER_TYPE_BUY
-        sl = price - sl_offset
-        tp = price + tp_offset
-    else:
-        order_type = mt5.ORDER_TYPE_SELL
-        sl = price + sl_offset
-        tp = price - tp_offset
+        # 3. Filling Mode Logic (INTEGER FIX)
+        # We check raw bits (1=FOK, 2=IOC) because your library version lacks the constants
+        filling = mt5.ORDER_FILLING_FOK # Default fallback
+        
+        # Check if symbol supports IOC (Bit 2)
+        if (symbol_info.filling_mode & 2) != 0:
+            filling = mt5.ORDER_FILLING_IOC
+        # Check if symbol supports FOK (Bit 1)
+        elif (symbol_info.filling_mode & 1) != 0:
+            filling = mt5.ORDER_FILLING_FOK
 
-    request = {
-        "action": mt5.TRADE_ACTION_DEAL,
-        "symbol": signal.symbol,
-        "volume": signal.volume,
-        "type": order_type,
-        "price": price,
-        "sl": sl,
-        "tp": tp,
-        "deviation": 20,
-        "magic": signal.magic,
-        "comment": signal.comment,
-        "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": filling_mode,
-    }
+        # 4. Get Price & Calculate Levels
+        tick = mt5.symbol_info_tick(signal.symbol)
+        if not tick:
+            raise HTTPException(status_code=500, detail="No price data available")
 
-    result = mt5.order_send(request)
-    
-    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-        msg = result.comment if result else "Unknown"
-        print(f"❌ Exec Failed: {msg}")
-        raise HTTPException(status_code=500, detail=msg)
+        # Determine Entry Price
+        price = tick.ask if signal.action.lower() == "buy" else tick.bid
+        point = symbol_info.point
+        
+        # Calculate Offsets (Force Float)
+        sl_offset = float(signal.sl_points * point)
+        tp_offset = float(signal.tp_points * point)
+        
+        # Calculate SL/TP
+        if signal.action.lower() == "buy":
+            order_type = mt5.ORDER_TYPE_BUY
+            sl = price - sl_offset
+            tp = price + tp_offset
+        else:
+            order_type = mt5.ORDER_TYPE_SELL
+            sl = price + sl_offset
+            tp = price - tp_offset
 
-    print(f"✅ TRADE: {signal.action.upper()} {signal.volume} @ {price}")
-    return {"order_id": result.order, "price": result.price}
+        # 5. Build Request (Rounding prevents floating point errors)
+        digits = symbol_info.digits
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": signal.symbol,
+            "volume": float(signal.volume),
+            "type": order_type,
+            "price": float(price),
+            "sl": round(sl, digits), 
+            "tp": round(tp, digits), 
+            "deviation": 20,
+            "magic": int(signal.magic),
+            "comment": str(signal.comment),
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": filling,
+        }
 
+        # 6. Execute
+        result = mt5.order_send(request)
+        
+        if result is None:
+            raise HTTPException(status_code=500, detail="MT5 Order Send returned None (Library Error)")
+            
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            error_details = f"MT5 Error: {result.comment} (Code: {result.retcode})"
+            print(f"❌ {error_details}")
+            # Raise exception to inform Strategy Engine
+            raise HTTPException(status_code=500, detail=error_details)
+
+        print(f"✅ TRADE EXECUTED: {signal.action} {signal.volume} @ {price}")
+        return {"order_id": result.order, "price": result.price}
+
+    except HTTPException as http_ex:
+        raise http_ex
+    except Exception as e:
+        error_msg = f"CRASH: {str(e)}"
+        print(f"❌ {error_msg}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=error_msg)
+        
 @app.get("/account_info")
 def get_account_info():
     if not mt5.terminal_info(): return {"status": "disconnected"}

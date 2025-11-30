@@ -28,7 +28,7 @@ async def receive_tick(tick: TickData):
     # Since we don't have a session mapping for the bridge, we broadcast to all.
     for session_id, bot in bot_manager.bots.items():
         if bot.running and bot.symbol == tick.symbol:
-            await bot.on_external_tick(tick.dict())
+            await bot.on_external_tick(tick.model_dump())
     return {"status": "ok"}
 
 if __name__ == "__main__":
