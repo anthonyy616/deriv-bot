@@ -2,7 +2,6 @@ import asyncio
 import time
 import requests
 import os
-import logging
 
 class GridStrategy:
     def __init__(self, config_manager):
@@ -49,16 +48,20 @@ class GridStrategy:
         if not self.running: return
         if tick_data['symbol'] != self.symbol: return
 
-        price = tick_data['ask']
-        point = tick_data.get('point', 0.001)
-        self.cmp = price
+        # 1. Extract Data
+        ask = tick_data['ask']
+        bid = tick_data['bid']
+        point = tick_data.get('point', 0.01) # Default to 0.01 if missing
         
-        await self.process_strategy(price, point)
+        self.cmp = ask
+        
+        # 2. Process Strategy with full context
+        await self.process_strategy(ask, bid, point)
 
-    async def process_strategy(self, price, point):
+    async def process_strategy(self, ask, bid, point):
         # STAGE 1: Place Initial Virtual Grid
         if self.iteration_state == "idle" and not self.pending_orders and not self.positions:
-            await self.place_brackets(price, point, is_initial=True)
+            await self.place_brackets(ask, bid, point, is_initial=True)
             self.iteration_state = "active"
             return
 
@@ -66,40 +69,73 @@ class GridStrategy:
         if self.iteration_state == "active":
             triggered_order = None
             for order in self.pending_orders:
-                if order['type'] == 'BUY_STOP' and price >= order['price']:
+                # BUY STOP Trigger (Ask price hits level)
+                if order['type'] == 'BUY_STOP' and ask >= order['price']:
                     triggered_order = order; break
-                elif order['type'] == 'SELL_STOP' and price <= order['price']:
+                # SELL STOP Trigger (Bid price hits level)
+                elif order['type'] == 'SELL_STOP' and bid <= order['price']:
                     triggered_order = order; break
             
             if triggered_order:
                 self.pending_orders.clear()
-                print(f"⚡ TRIGGER: {triggered_order['type']} at {price}")
-                await self.execute_trade_and_chain(triggered_order, price, point)
+                print(f"⚡ TRIGGER: {triggered_order['type']} at {ask}")
+                await self.execute_trade_and_chain(triggered_order, ask, bid, point)
 
-    async def place_brackets(self, anchor_price, point, is_initial=False):
-        spread_pts = self.config.get('spread', 100)
-        spread_price = spread_pts * point
-        sl_pts = self.config.get('sl_dist', 240)
-        tp_pts = self.config.get('tp_dist', 160)
+    async def place_brackets(self, ask, bid, point, is_initial=False):
+        """Calculates distances using User Pips ($1) and enforces 2x Spread Rule."""
         
-        buy_price = anchor_price + spread_price
-        sell_price = anchor_price - spread_price
+        # 1. Calculate Market Spread in Price Units ($)
+        market_spread_usd = ask - bid
+        
+        # 2. Get User Configuration ($)
+        user_spread_usd = self.config.get('spread', 8)
+        
+        # 3. Enforce 2x Spread Rule
+        # "The spread the user sets always has to be 2x this value"
+        required_min_spread = market_spread_usd * 2
+        
+        # Dynamic Spread: Use the larger of the two
+        final_spread_usd = max(user_spread_usd, required_min_spread)
+        
+        # Log if we overrode the user
+        if final_spread_usd > user_spread_usd:
+             if is_initial: # Only log once to avoid spam
+                print(f"⚠️ Market Spread is wide (${market_spread_usd:.2f}). Enforcing 2x rule: Spread increased from ${user_spread_usd} to ${final_spread_usd:.2f}")
+
+        # 4. Calculate Levels (Price)
+        buy_stop_price = ask + final_spread_usd
+        sell_stop_price = bid - final_spread_usd
+        
+        # 5. Calculate SL/TP Distances (Convert $ -> Points)
+        # Bridge expects INTEGERS (Points). 
+        # Formula: Price_Distance / Point_Value
+        # Example: $24.00 / 0.01 = 2400 Points
+        
+        sl_usd = self.config.get('sl_dist', 24)
+        tp_usd = self.config.get('tp_dist', 16)
+        
+        sl_points = int(sl_usd / point)
+        tp_points = int(tp_usd / point)
         
         self.pending_orders = [
-            {'type': 'BUY_STOP', 'price': buy_price, 'sl': sl_pts, 'tp': tp_pts},
-            {'type': 'SELL_STOP', 'price': sell_price, 'sl': sl_pts, 'tp': tp_pts}
+            {'type': 'BUY_STOP', 'price': buy_stop_price, 'sl': sl_points, 'tp': tp_points},
+            {'type': 'SELL_STOP', 'price': sell_stop_price, 'sl': sl_points, 'tp': tp_points}
         ]
         
         if is_initial:
-            print(f"🎯 Initial Grid Placed: Buy@{buy_price:.5f} | Sell@{sell_price:.5f}")
+            print(f"🎯 Grid Placed. Gap: ${final_spread_usd:.2f} | Buy: {buy_stop_price:.2f} | Sell: {sell_stop_price:.2f}")
 
-    async def execute_trade_and_chain(self, order, current_price, point):
+    async def execute_trade_and_chain(self, order, ask, bid, point):
         action = "buy" if order['type'] == 'BUY_STOP' else "sell"
         volume = self.config.get('lot_size', 0.01)
         
+        # Payload uses POINTS for SL/TP
         payload = {
-            "action": action, "symbol": self.symbol, "volume": volume,
-            "sl_points": int(order['sl']), "tp_points": int(order['tp']),
+            "action": action, 
+            "symbol": self.symbol, 
+            "volume": volume,
+            "sl_points": int(order['sl']), 
+            "tp_points": int(order['tp']),
             "comment": f"Grid-Itr-{self.iteration}"
         }
         
@@ -112,7 +148,8 @@ class GridStrategy:
                 self.iteration += 1
                 
                 if len(self.positions) < self.config.get('max_positions', 5):
-                    await self.place_brackets(data.get('price', current_price), point)
+                    # Place next bracket around current price
+                    await self.place_brackets(ask, bid, point)
                 else:
                     print("🛑 Max positions reached.")
                     self.iteration_state = "max_cap_reached"
@@ -123,7 +160,7 @@ class GridStrategy:
             print(f"❌ Bridge Connection Error: {e}")
 
     def check_stopping_conditions(self):
-        # 1. Time Check
+        # Time Check
         max_mins = self.config.get('max_runtime_minutes', 0)
         if max_mins > 0:
             elapsed = (time.time() - self.start_time) / 60
@@ -131,19 +168,14 @@ class GridStrategy:
                 print(f"⏰ Time Limit Reached. Stopping.")
                 return True
 
-        # 2. Drawdown Check
+        # Drawdown Check
         max_dd = self.config.get('max_drawdown_usd', 0)
         if max_dd > 0:
-            current_balance = self.get_account_balance()
-            # Drawdown = Initial Balance - Current Balance (simpler for now, strictly realizing loss logic)
-            # OR logic: Equity based?
             current_equity = self.get_account_equity()
-            
-            # Use Equity for active drawdown monitoring
             if current_equity > 0:
                 drawdown = self.initial_balance - current_equity
                 if drawdown >= max_dd:
-                    print(f"📉 Max Drawdown Reached (-${drawdown:.2f} >= ${max_dd}). Stopping.")
+                    print(f"📉 Max Drawdown Reached (-${drawdown:.2f}). Stopping.")
                     return True
         return False
 
