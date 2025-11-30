@@ -20,7 +20,7 @@ MT5_SERVER = os.getenv("MT5_SERVER", "Weltrade-Live")
 MT5_PATH = os.getenv("MT5_PATH", r"C:\Program Files\MetaTrader 5\terminal64.exe")
 SIGNAL_SERVER_URL = os.getenv("SIGNAL_SERVER_URL", "http://localhost:8000")
 BRIDGE_PORT = int(os.getenv("BRIDGE_PORT", 8001))
-SYMBOL = "FX20"  # Default symbol to stream
+SYMBOL = "Volatility 20 Index"  # Default symbol to stream
 
 app = FastAPI(title="MT5 Bridge")
 
@@ -38,22 +38,30 @@ class TickData(BaseModel):
     bid: float
     ask: float
     time: int
+    point: float
 
 # --- MT5 Management ---
 
 def initialize_mt5():
+    print(f"Attempting to connect to MT5 at: {MT5_PATH}")
+    # Attempt to initialize with path
     if not mt5.initialize(path=MT5_PATH):
-        print(f"initialize() failed, error code = {mt5.last_error()}")
-        return False
+        print(f"❌ initialize() failed, error code = {mt5.last_error()}")
+        # Try without path (if it's already running or in registry)
+        print("Retrying without path...")
+        if not mt5.initialize():
+            print(f"❌ initialize() without path failed, error code = {mt5.last_error()}")
+            return False
     
+    # Login
     authorized = mt5.login(MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
     if authorized:
-        print(f"Connected to MT5 account #{MT5_LOGIN}")
+        print(f"✅ Connected to MT5 account #{MT5_LOGIN}")
         account_info = mt5.account_info()
         if account_info:
-            print(f"Balance: {account_info.balance} USD, Equity: {account_info.equity} USD")
+            print(f"   Balance: {account_info.balance} USD, Equity: {account_info.equity} USD")
     else:
-        print(f"failed to connect at account #{MT5_LOGIN}, error code: {mt5.last_error()}")
+        print(f"❌ Failed to login to account #{MT5_LOGIN}, error code: {mt5.last_error()}")
     return authorized
 
 def ensure_symbol(symbol):
@@ -73,6 +81,12 @@ async def tick_stream_loop():
         return
 
     last_time = 0
+    symbol_info = mt5.symbol_info(SYMBOL)
+    if not symbol_info:
+        print(f"Failed to get symbol info for {SYMBOL}")
+        return
+        
+    point = symbol_info.point
     
     while True:
         # Check connection
@@ -91,7 +105,8 @@ async def tick_stream_loop():
                     "symbol": SYMBOL,
                     "bid": tick.bid,
                     "ask": tick.ask,
-                    "time": int(tick.time)
+                    "time": int(tick.time),
+                    "point": point
                 }
                 # Use a short timeout to avoid blocking if server is down
                 requests.post(f"{SIGNAL_SERVER_URL}/tick", json=payload, timeout=0.5)
@@ -118,7 +133,8 @@ def shutdown_event():
 @app.post("/execute_signal")
 async def execute_trade(signal: TradeSignal):
     if not mt5.terminal_info():
-        initialize_mt5()
+        if not initialize_mt5():
+             raise HTTPException(status_code=500, detail="MT5 not connected")
 
     if not ensure_symbol(signal.symbol):
         raise HTTPException(status_code=400, detail=f"Symbol {signal.symbol} not found")
@@ -129,17 +145,21 @@ async def execute_trade(signal: TradeSignal):
         raise HTTPException(status_code=400, detail="Symbol info not found")
 
     point = symbol_info.point
-    price = mt5.symbol_info_tick(signal.symbol).ask if signal.action == "buy" else mt5.symbol_info_tick(signal.symbol).bid
+    tick = mt5.symbol_info_tick(signal.symbol)
+    if not tick:
+        raise HTTPException(status_code=500, detail="Failed to get tick data")
+        
+    price = tick.ask if signal.action == "buy" else tick.bid
     
     # Calculate SL/TP prices
     if signal.action == "buy":
         order_type = mt5.ORDER_TYPE_BUY
-        sl = price - signal.sl_points * point
-        tp = price + signal.tp_points * point
+        sl = price - (signal.sl_points * point)
+        tp = price + (signal.tp_points * point)
     else:
         order_type = mt5.ORDER_TYPE_SELL
-        sl = price + signal.sl_points * point
-        tp = price - signal.tp_points * point
+        sl = price + (signal.sl_points * point)
+        tp = price - (signal.tp_points * point)
 
     request = {
         "action": mt5.TRADE_ACTION_DEAL,
@@ -159,11 +179,14 @@ async def execute_trade(signal: TradeSignal):
     # Execute
     result = mt5.order_send(request)
     
+    if result is None:
+         raise HTTPException(status_code=500, detail="Order send returned None")
+         
     if result.retcode != mt5.TRADE_RETCODE_DONE:
-        print(f"Order failed: {result.comment} ({result.retcode})")
+        print(f"❌ Order failed: {result.comment} ({result.retcode})")
         raise HTTPException(status_code=500, detail=f"MT5 Error: {result.comment}")
 
-    print(f"Trade Executed: {signal.action} {signal.volume} {signal.symbol} @ {price}")
+    print(f"✅ Trade Executed: {signal.action.upper()} {signal.volume} {signal.symbol} @ {price}")
     return {
         "status": "success",
         "order_id": result.order,
@@ -178,6 +201,25 @@ def health_check():
         "status": "online", 
         "mt5_connected": info is not None if info else False,
         "account": MT5_LOGIN
+    }
+
+@app.get("/account_info")
+def get_account_info():
+    if not mt5.terminal_info():
+        return {"status": "disconnected"}
+    
+    account = mt5.account_info()
+    positions = mt5.positions_get(symbol=SYMBOL)
+    orders = mt5.orders_get(symbol=SYMBOL)
+    tick = mt5.symbol_info_tick(SYMBOL)
+    
+    return {
+        "balance": account.balance if account else 0,
+        "equity": account.equity if account else 0,
+        "positions_count": len(positions) if positions else 0,
+        "pending_orders_count": len(orders) if orders else 0,
+        "current_price": tick.ask if tick else 0,
+        "symbol": SYMBOL
     }
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 class GridStrategy:
     def __init__(self, config_manager, symbol=None):
         self.config_manager = config_manager
-        self.symbol = config_manager.get_config().get('symbol', 'FX20')
+        self.symbol = config_manager.get_config().get('symbol', 'Volatility 20 Index')
         self.cmp = None
         self.pending_orders = []
         self.positions = []
@@ -60,16 +60,17 @@ class GridStrategy:
             # Use ASK for Buy triggers, BID for Sell triggers? 
             # For simplicity, use mid or just ask for now as 'current price'
             price = tick_data['ask'] 
+            point = tick_data.get('point')
             self.cmp = price
             
-            await self.process_strategy(price)
+            await self.process_strategy(price, point)
         except Exception as e:
             print(f"Error processing tick: {e}")
 
-    async def process_strategy(self, price):
+    async def process_strategy(self, price, point=None):
         # STAGE 1: Place initial grid if idle
         if self.iteration_state == "idle" and not self.pending_orders and not self.positions:
-            await self.place_initial_grid(price)
+            await self.place_initial_grid(price, point)
             self.iteration_state = "building"
             return
 
@@ -87,40 +88,25 @@ class GridStrategy:
             if triggered_order:
                 self.pending_orders.clear()
                 print(f"⚡ Triggered {triggered_order['type']} at {price:.2f}")
-                await self.execute_trade_logic(triggered_order, price)
+                await self.execute_trade_logic(triggered_order, price, point)
 
-    async def place_initial_grid(self, price):
-        spread = self.config.get('spread', 100) # Points? Or Price difference? 
-        # Assuming config 'spread' is in POINTS if using MT5, or Price. 
-        # Let's assume Price difference for now to match previous logic.
+    async def place_initial_grid(self, price, point=None):
+        spread_points = self.config.get('spread', 100)
         
-        tp_dist = 160 # Points (e.g. 16 pips if 10 points/pip) - Adjust as needed
+        # Calculate Spread in Price terms
+        # If we have 'point', use it. Otherwise guess.
+        if point:
+            spread_price = spread_points * point
+        else:
+            # Fallback heuristic if point is missing (shouldn't happen with new bridge)
+            spread_price = spread_points * 0.00001 if "FX" in self.symbol else spread_points * 0.01
+            print(f"⚠️ Warning: 'point' not received. Guessing spread_price={spread_price}")
+
+        tp_dist = 160 # Points
         sl_dist = 240 # Points
         
-        # If the user meant "spread" as distance:
-        dist = spread * 0.0001 if "FX" in self.symbol else spread # Rough heuristic
-        # Actually, let's stick to the user's "points" requirement.
-        # If the strategy calculates PRICE, we need to convert to POINTS for the bridge.
-        # OR, we send the calculated SL/TP PRICES to the bridge?
-        # The bridge expects sl_points, tp_points.
-        
-        # Strategy Logic:
-        # Buy Stop @ Price + Spread
-        # Sell Stop @ Price - Spread
-        
-        # We'll stick to the previous logic of calculating absolute prices for triggers,
-        # but when sending to bridge, we send POINTS for SL/TP.
-        
-        # Previous logic:
-        # buy_stop_price = price + spread
-        # tp = buy_stop_price + tp_dist
-        # sl = buy_stop_price - sl_dist
-        
-        # So TP distance = tp_dist, SL distance = sl_dist.
-        # We will use these directly for the bridge.
-        
-        buy_stop_price = price + spread
-        sell_stop_price = price - spread
+        buy_stop_price = price + spread_price
+        sell_stop_price = price - spread_price
         
         buy_stop = {
             'type': 'BUY_STOP',
@@ -137,9 +123,10 @@ class GridStrategy:
         }
         
         self.pending_orders = [buy_stop, sell_stop]
-        print(f"🎯 Iteration {self.iteration + 1}: Waiting for BUY@{buy_stop_price:.5f} or SELL@{sell_stop_price:.5f}")
+        print(f"🎯 Iteration {self.iteration + 1}: Price={price:.5f}, Spread={spread_points}pts ({spread_price:.5f})")
+        print(f"   Waiting for BUY >= {buy_stop_price:.5f} or SELL <= {sell_stop_price:.5f}")
 
-    async def execute_trade_logic(self, order, current_price):
+    async def execute_trade_logic(self, order, current_price, point=None):
         action = "buy" if order['type'] == 'BUY_STOP' else "sell"
         
         # Calculate Lot Size (Mock or Config)
@@ -177,7 +164,7 @@ class GridStrategy:
                 # The previous logic was: "Place NEW BRACKET around the FILLED PRICE"
                 # We can do that.
                 
-                await self.place_next_bracket(data.get("price"))
+                await self.place_next_bracket(data.get("price"), point)
                 
             else:
                 print(f"❌ Bridge Error: {response.text}")
@@ -187,24 +174,53 @@ class GridStrategy:
             print(f"❌ Failed to contact Bridge: {e}")
             self.iteration_state = "idle"
 
-    async def place_next_bracket(self, anchor_price):
+    async def place_next_bracket(self, anchor_price, point=None):
         if len(self.positions) >= self.config.get('max_positions', 5):
             print("Max positions reached. Waiting for clear.")
             self.iteration_state = "waiting_close"
             return
 
-        spread = self.config.get('spread', 100)
+        spread_points = self.config.get('spread', 100)
+        
+        # Calculate Spread in Price terms
+        if point:
+            spread_price = spread_points * point
+        else:
+             # Fallback
+            spread_price = spread_points * 0.00001 if "FX" in self.symbol else spread_points * 0.01
+
         tp_dist = 160
         sl_dist = 240
         
-        buy_stop_price = anchor_price + spread
-        sell_stop_price = anchor_price - spread
+        buy_stop_price = anchor_price + spread_price
+        sell_stop_price = anchor_price - spread_price
         
         self.pending_orders = [
             {'type': 'BUY_STOP', 'price': buy_stop_price, 'sl_points': sl_dist, 'tp_points': tp_dist},
             {'type': 'SELL_STOP', 'price': sell_stop_price, 'sl_points': sl_dist, 'tp_points': tp_dist}
         ]
         print(f"📍 New Bracket Placed around {anchor_price:.5f}")
+
+    def get_status(self):
+        # Try to fetch real-time data from bridge
+        bridge_data = {}
+        try:
+            res = requests.get(f"{self.mt5_bridge_url}/account_info", timeout=0.5)
+            if res.status_code == 200:
+                bridge_data = res.json()
+        except:
+            pass # Bridge might be down
+
+        return {
+            "running": self.running,
+            "symbol": self.symbol,
+            "current_price": bridge_data.get("current_price", self.cmp),
+            "positions_count": bridge_data.get("positions_count", len(self.positions)),
+            "pending_orders_count": bridge_data.get("pending_orders_count", len(self.pending_orders)),
+            "config": self.config,
+            "iteration": self.iteration,
+            "state": self.iteration_state
+        }
 
     async def stop(self):
         self.running = False

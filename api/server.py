@@ -32,6 +32,13 @@ bot_manager = BotManager()
 async def read_index():
     return FileResponse('static/index.html')
 
+@app.get("/env")
+async def get_env():
+    return {
+        "SUPABASE_URL": os.getenv("SUPABASE_URL"),
+        "SUPABASE_KEY": os.getenv("SUPABASE_KEY")
+    }
+
 class ConnectRequest(BaseModel):
     name: str = "Trader"
 

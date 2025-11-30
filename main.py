@@ -19,6 +19,7 @@ class TickData(BaseModel):
     bid: float
     ask: float
     time: int
+    point: float | None = None
 
 @app.post("/tick")
 async def receive_tick(tick: TickData):
