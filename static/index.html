@@ -22,11 +22,31 @@
         }
     </script>
     <style>
+        /* Loading Spinner */
+        .loader {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
         * {
             box-sizing: border-box;
         }
 
-        /* Base Styles (Light Mode) */
+        /* Base Styles */
         body {
             background-color: #ffffff;
             color: #0f172a;
@@ -217,118 +237,70 @@
                 font-size: 0.75rem;
             }
         }
-
-        /* iPhone 14 Pro specific (390x844) */
-        @media (max-width: 430px) {
-            .header-section {
-                flex-direction: column;
-                gap: 0.75rem;
-                align-items: flex-start;
-            }
-
-            .header-controls {
-                width: 100%;
-                justify-content: space-between;
-            }
-
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr) !important;
-            }
-
-            .main-grid {
-                grid-template-columns: 1fr !important;
-            }
-        }
     </style>
+</head>
+
 </head>
 
 <body
     class="p-4 md:p-8 font-sans bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 transition-colors duration-300">
 
-    <div id="login-modal"
-        class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center hidden">
+    <div id="login-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center">
         <div
             class="bg-white dark:bg-slate-800 p-8 rounded-lg shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-700">
-            <h2 class="text-2xl font-bold text-center mb-6 text-blue-500">Weltrade MT5 Bot</h2>
+            <h2 class="text-2xl font-bold text-center mb-6 text-blue-500">Weltrade Bot Login</h2>
             <form id="form-login" onsubmit="handleSupabaseLogin(event)" class="space-y-4">
                 <div>
-                    <label class="block text-sm font-medium mb-1 text-slate-500 dark:text-slate-400">Email</label>
+                    <label class="block text-sm font-medium mb-1">Email</label>
                     <input type="email" id="email"
-                        class="w-full p-2 rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 focus:outline-none"
-                        required placeholder="you@example.com">
+                        class="w-full p-2 rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 outline-none"
+                        required placeholder="user@example.com">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium mb-1 text-slate-500 dark:text-slate-400">Password</label>
+                    <label class="block text-sm font-medium mb-1">Password</label>
                     <input type="password" id="password"
-                        class="w-full p-2 rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 focus:outline-none"
+                        class="w-full p-2 rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 outline-none"
                         required placeholder="••••••••">
                 </div>
-                <button type="submit"
-                    class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition">Login
-                    / Connect</button>
+                <button type="submit" id="login-btn"
+                    class="w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition flex justify-center items-center gap-2">
+                    <span>Sign In / Register</span>
+                </button>
             </form>
             <p id="login-error" class="text-red-500 text-sm text-center mt-4 hidden"></p>
         </div>
     </div>
 
-    <div class="max-w-6xl mx-auto space-y-6">
-        <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div>
-                <h1 class="text-2xl md:text-3xl font-bold text-blue-500">Weltrade MT5 Bot</h1>
-                <p class="text-sm text-slate-500 dark:text-slate-400">Auto-Grid Strategy Engine</p>
-            </div>
-
-            <div class="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end">
-                <button id="theme-btn"
-                    class="px-3 py-1.5 text-xs font-medium bg-slate-200 dark:bg-slate-800 rounded hover:bg-slate-300 dark:hover:bg-slate-700 transition"
-                    onclick="toggleTheme()">
-                    Theme
-                </button>
-
+    <div id="dashboard" class="max-w-6xl mx-auto space-y-6 hidden">
+        <div class="flex items-center justify-between">
+            <h1 class="text-2xl md:text-3xl font-bold text-blue-500">Weltrade MT5 Bot</h1>
+            <div class="flex items-center gap-3">
                 <div id="status-badge"
                     class="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                    <div class="h-2 w-2 rounded-full bg-slate-400"></div>
-                    <span>Offline</span>
+                    <div class="h-2 w-2 rounded-full bg-slate-400"></div> Offline
                 </div>
-
                 <button id="toggle-btn"
-                    class="px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded transition"
-                    onclick="toggleBot()">
-                    Start Bot
-                </button>
-
-                <div class="relative">
-                    <button onclick="toggleUserMenu()"
-                        class="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-500 text-xs font-medium rounded border border-red-500/20 flex items-center gap-1">
-                        Account ▾
-                    </button>
-                    <div id="user-menu"
-                        class="dropdown-menu absolute right-0 mt-2 w-48 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden">
-                        <button onclick="logout()"
-                            class="w-full text-left px-4 py-3 text-sm text-red-500 hover:bg-slate-50 dark:hover:bg-slate-700 transition">
-                            Sign Out
-                        </button>
-                    </div>
-                </div>
+                    class="px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded"
+                    onclick="toggleBot()">Start Bot</button>
+                <button onclick="logout()"
+                    class="px-3 py-1.5 bg-red-500/10 text-red-500 text-xs font-medium rounded border border-red-500/20">Sign
+                    Out</button>
             </div>
         </div>
 
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
                 <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Live Price</div>
-                <div id="price" class="text-2xl font-bold mt-1 tracking-tight">---</div>
-                <div id="symbol-display" class="text-xs text-blue-500 font-mono mt-1">FX Vol 20</div>
+                <div id="price-display" class="text-2xl font-bold mt-1 tracking-tight">---</div>
             </div>
             <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
                 <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Positions</div>
-                <div class="text-2xl font-bold mt-1">
-                    <span id="pos-count">0</span>
-                    <span class="text-sm text-slate-500 font-normal">/ <span id="max-pos-display">5</span></span>
+                <div class="text-2xl font-bold mt-1"><span id="pos-count">0</span> / <span id="max-pos-disp">5</span>
                 </div>
             </div>
             <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
-                <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Pending Orders</div>
-                <div id="pending-count" class="text-2xl font-bold mt-1">0</div>
+                <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Pending</div>
+                <div class="text-2xl font-bold mt-1"><span id="pending-count">0</span></div>
             </div>
             <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
                 <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Drawdown</div>
@@ -339,407 +311,286 @@
         <div class="grid md:grid-cols-3 gap-6">
             <div
                 class="md:col-span-1 bg-white dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 h-fit">
-                <h2 class="text-lg font-semibold mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Strategy
-                    Config</h2>
-                <form id="config-form" onsubmit="updateConfig(event)" class="space-y-4">
-                    <div>
-                        <label class="block text-xs font-medium mb-1.5 text-slate-500">Asset Symbol</label>
-                        <input type="text" id="symbol"
-                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
-                            value="FX Vol 20">
+                <h2 class="text-lg font-semibold mb-4 border-b pb-2 border-slate-700">Settings</h2>
+                <form onsubmit="updateConfig(event)" class="space-y-4">
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">Index</label>
+                            <input type="text" id="symbol"
+                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-600 outline-none"
+                                value="FX Vol 20">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">Spread</label>
+                            <input type="number" id="spread"
+                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-600 outline-none"
+                                value="8">
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium mb-1.5 text-slate-500">Spread (Points)</label>
-                        <input type="number" id="spread"
-                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
-                            value="100">
+
+                    <div class="p-3 border border-blue-500/30 rounded bg-blue-50/50 dark:bg-blue-900/10">
+                        <label class="block text-xs font-bold text-blue-500 mb-2">Buy Stop Settings</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-[10px] text-gray-500 mb-0.5">TP ($)</label>
+                                <input type="number" id="buy_stop_tp"
+                                    class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] text-gray-500 mb-0.5">SL ($)</label>
+                                <input type="number" id="buy_stop_sl"
+                                    class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="p-3 border border-red-500/30 rounded bg-red-50/50 dark:bg-red-900/10">
+                        <label class="block text-xs font-bold text-red-500 mb-2">Sell Stop Settings</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-[10px] text-gray-500 mb-0.5">TP ($)</label>
+                                <input type="number" id="sell_stop_tp"
+                                    class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] text-gray-500 mb-0.5">SL ($)</label>
+                                <input type="number" id="sell_stop_sl"
+                                    class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
+                            </div>
+                        </div>
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium mb-1.5 text-slate-500">Max Positions (Max 20)</label>
+                        <label class="block text-xs font-bold text-gray-500 mb-1">Max Positions</label>
                         <input type="number" id="max_positions"
-                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
-                            value="5" min="1" max="20" onchange="renderLotInputs()">
+                            class="w-full p-2 text-sm rounded bg-slate-900 border border-slate-600 mb-2" value="5"
+                            max="20" onchange="renderLotInputs()">
+                        <div id="lots-container" class="grid grid-cols-4 gap-2"></div>
                     </div>
-            </div>
 
-            <!-- Dynamic Lot Sizes -->
-            <div>
-                <label class="block text-xs font-medium mb-1.5 text-slate-500">Step Lot Sizes</label>
-                <div id="lots-container"
-                    class="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto p-1 border border-slate-100 dark:border-slate-700 rounded">
-                    <!-- Dynamic Inputs Generated Here -->
-                </div>
-            </div>
-
-            <!-- Split TP/SL -->
-            <div class="grid grid-cols-2 gap-3">
-                <div>
-                    <label class="block text-xs font-medium mb-1.5 text-green-500">Buy Stop TP ($)</label>
-                    <input type="number" id="buy_stop_tp"
-                        class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-green-500 outline-none"
-                        step="0.1" value="16">
-                </div>
-                <div>
-                    <label class="block text-xs font-medium mb-1.5 text-red-500">Buy Stop SL ($)</label>
-                    <input type="number" id="buy_stop_sl"
-                        class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-red-500 outline-none"
-                        step="0.1" value="24">
-                </div>
-                <div>
-                    <label class="block text-xs font-medium mb-1.5 text-green-500">Sell Stop TP ($)</label>
-                    <input type="number" id="sell_stop_tp"
-                        class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-green-500 outline-none"
-                        step="0.1" value="16">
-                </div>
-                <div>
-                    <label class="block text-xs font-medium mb-1.5 text-red-500">Sell Stop SL ($)</label>
-                    <input type="number" id="sell_stop_sl"
-                        class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-red-500 outline-none"
-                        step="0.1" value="24">
-                </div>
-
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="block text-xs font-medium mb-1.5 text-slate-500">Max Runtime (Min)</label>
-                        <input type="number" id="max_runtime_minutes"
-                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
-                            placeholder="0 (Infinite)">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">Max Time (Min)</label>
+                            <input type="number" id="max_runtime_minutes"
+                                class="w-full p-2 text-sm rounded bg-slate-900 border border-slate-600">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">Max Drawdown ($)</label>
+                            <input type="number" id="max_drawdown_usd"
+                                class="w-full p-2 text-sm rounded bg-slate-900 border border-red-900/50">
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-xs font-medium mb-1.5 text-red-400">Max Drawdown ($)</label>
-                        <input type="number" id="max_drawdown_usd"
-                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-red-900/30 focus:border-red-500 outline-none"
-                            step="1" placeholder="50">
-                    </div>
-                </div>
 
-                <button type="submit"
-                    class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition">Update
-                    Settings</button>
+                    <button type="submit"
+                        class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium">Update
+                        Settings</button>
                 </form>
             </div>
 
             <div
-                class="md:col-span-2 bg-white dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col">
-                <h2 class="text-lg font-semibold mb-4 border-b border-slate-100 dark:border-slate-700 pb-2">Live
-                    Terminal Log</h2>
-                <div id="logs"
-                    class="flex-1 bg-slate-50 dark:bg-slate-950 rounded p-4 font-mono text-xs overflow-y-auto h-80 space-y-1 text-green-600 dark:text-green-400">
-                    <div>[System] Dashboard ready. Waiting for connection...</div>
+                class="md:col-span-2 bg-white dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col h-[600px]">
+                <h2 class="text-lg font-semibold mb-2">Live Terminal</h2>
+                <div id="logs" class="flex-1 bg-slate-950 rounded p-4 font-mono text-xs overflow-y-auto text-green-400">
+                    <div>[System] Ready.</div>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
-        // --- State & Config ---
-        let sessionId = localStorage.getItem('session_id');
         let supabase = null;
         let updateInterval = null;
+        let sessionToken = null;
+        let lastRunningState = false; // For detecting stop/start events
 
-        // --- Theme Logic ---
-        function initTheme() {
-            if (localStorage.getItem('theme') === 'light') {
-                document.documentElement.classList.remove('dark');
-            } else {
-                document.documentElement.classList.add('dark');
-            }
-        }
-        function toggleTheme() {
-            document.documentElement.classList.toggle('dark');
-            localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+        // --- UI Helpers ---
+        function setLoggedInState(session) {
+            sessionToken = session.access_token;
+            document.getElementById('login-modal').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+            const btn = document.getElementById('login-btn');
+            if (btn) btn.innerHTML = 'Sign In / Register';
+            log("✅ Authenticated.");
+            loadConfig();
+            startPolling();
         }
 
-        // --- Auth Logic ---
+        function setLoggedOutState() {
+            sessionToken = null;
+            document.getElementById('login-modal').classList.remove('hidden');
+            document.getElementById('dashboard').classList.add('hidden');
+            if (updateInterval) clearInterval(updateInterval);
+        }
+
+        // --- 1. Initialize Supabase ---
         async function initSupabase() {
             try {
                 const res = await fetch('/env');
                 const env = await res.json();
-                if (env.SUPABASE_URL && env.SUPABASE_KEY) {
-                    supabase = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
-                    const { data } = await supabase.auth.getSession();
-                    if (data.session) {
-                        // Valid Supabase session
-                        if (!sessionId) {
-                            // If we have Supabase auth but no bot session, connect now
-                            await connectToBot();
-                        } else {
-                            startPolling();
-                        }
-                    } else {
-                        showLogin();
-                    }
-                } else {
-                    console.log("Supabase not configured, running in local mode.");
-                    // In local mode, just start if we have a session ID, else simulate login
-                    if (sessionId) startPolling(); else showLogin();
+                if (!env.SUPABASE_URL || !env.SUPABASE_KEY) {
+                    document.getElementById('login-error').textContent = "Server Error: Missing keys in .env";
+                    document.getElementById('login-error').classList.remove('hidden');
+                    return;
                 }
-            } catch (e) {
-                console.error("Init Error:", e);
-                showLogin();
-            }
+                supabase = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
+                const { data } = await supabase.auth.getSession();
+                if (data.session) setLoggedInState(data.session);
+                supabase.auth.onAuthStateChange((event, session) => {
+                    if (session) setLoggedInState(session);
+                    else setLoggedOutState();
+                });
+            } catch (e) { console.error("Init Error", e); }
         }
 
-        function showLogin() {
-            document.getElementById('login-modal').classList.remove('hidden');
-        }
-
+        // --- 2. Login Handler ---
         async function handleSupabaseLogin(e) {
             e.preventDefault();
             const email = document.getElementById('email').value;
             const password = document.getElementById('password').value;
-            const errorText = document.getElementById('login-error');
-            errorText.classList.add('hidden');
+            const btn = document.getElementById('login-btn');
+            const errBox = document.getElementById('login-error');
 
-            if (!supabase) {
-                // Local Dev Mode Fallback
-                await connectToBot();
-                return;
-            }
+            errBox.classList.add('hidden');
+            btn.innerHTML = '<div class="loader"></div>';
 
-            // Attempt Login
-            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-            if (error) {
-                // Attempt Register
-                const { data: upData, error: upError } = await supabase.auth.signUp({ email, password });
-                if (upError) {
-                    errorText.textContent = error.message;
-                    errorText.classList.remove('hidden');
-                    return;
-                }
-            }
-            await connectToBot();
-        }
-
-        async function connectToBot() {
             try {
-                const res = await fetch('/connect', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: "User" })
-                });
-                const data = await res.json();
-                sessionId = data.session_id;
-                localStorage.setItem('session_id', sessionId);
-                document.getElementById('login-modal').classList.add('hidden');
-                startPolling();
-                log("Connected to Trading Engine.");
-            } catch (e) {
-                alert("Connection Failed: " + e.message);
+                const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email, password });
+                if (loginData.session) { setLoggedInState(loginData.session); return; }
+
+                console.log("Login failed, attempting registration...");
+                const { data: signupData, error: signupError } = await supabase.auth.signUp({ email, password });
+                if (signupError) throw new Error(loginError ? loginError.message : signupError.message);
+
+                if (signupData.session) { setLoggedInState(signupData.session); return; }
+
+                const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({ email, password });
+                if (retryData.session) { setLoggedInState(retryData.session); return; }
+                throw new Error("Account created but auto-login failed. Please try again.");
+            } catch (err) {
+                errBox.textContent = err.message || "Authentication failed";
+                errBox.classList.remove('text-green-500'); errBox.classList.add('text-red-500'); errBox.classList.remove('hidden');
+                btn.innerHTML = 'Sign In / Register';
             }
         }
 
-        function toggleUserMenu() {
-            document.getElementById('user-menu').classList.toggle('show');
-        }
-
-        // Close menu when clicking outside
-        window.onclick = function (event) {
-            if (!event.target.matches('button') && !event.target.closest('.relative')) {
-                var dropdowns = document.getElementsByClassName("dropdown-menu");
-                for (var i = 0; i < dropdowns.length; i++) {
-                    if (dropdowns[i].classList.contains('show')) {
-                        dropdowns[i].classList.remove('show');
-                    }
-                }
-            }
-        }
-
-        async function logout() {
-            if (supabase) await supabase.auth.signOut();
-            localStorage.removeItem('session_id');
-            location.reload();
-        }
-
-        // --- Bot Interaction ---
-        function startPolling() {
-            fetchStatus();
-            if (updateInterval) clearInterval(updateInterval);
-            updateInterval = setInterval(fetchStatus, 1000);
-        }
-
-        async function fetchStatus() {
-            if (!sessionId) return;
+        // --- 3. API & Data ---
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            if (!sessionToken) return;
             try {
-                const res = await fetch('/status', {
-                    headers: { 'X-Session-ID': sessionId }
-                });
-                if (res.status === 401) {
-                    // Session invalid
-                    localStorage.removeItem('session_id');
-                    location.reload();
-                    return;
-                }
-                const data = await res.json();
-                renderDashboard(data);
-            } catch (e) {
-                console.error("Poll Error:", e);
-            }
-        }
-
-        function renderDashboard(data) {
-            const isRunning = data.running;
-
-            // Status Badge
-            const badge = document.getElementById('status-badge');
-            if (isRunning) {
-                badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400";
-                badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div><span>Running</span>';
-            } else {
-                badge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400";
-                badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-slate-400"></div><span>Stopped</span>';
-            }
-
-            // Toggle Button
-            const btn = document.getElementById('toggle-btn');
-            btn.textContent = isRunning ? "Stop Bot" : "Start Bot";
-            btn.className = isRunning
-                ? "px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded transition"
-                : "px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded transition";
-
-            // Stats
-            document.getElementById('price').textContent = data.current_price ? data.current_price.toFixed(5) : "---";
-            document.getElementById('symbol-display').textContent = data.symbol || "---";
-            document.getElementById('pos-count').textContent = data.positions_count || 0;
-            document.getElementById('pending-count').textContent = data.pending_orders_count || 0;
-
-            // Calc current drawdown (Balance - Equity if Equity < Balance)
-            // Note: The backend status payload needs to return equity/balance for this to be accurate real-time
-            // For now, we rely on the backend provided info or placeholder
-            // document.getElementById('drawdown-display').textContent = ... 
-
-            // Config Sync (Only if input is not focused to avoid jumping values)
-            if (data.config && document.activeElement.tagName !== "INPUT") {
-                if (data.config.symbol) document.getElementById('symbol').value = data.config.symbol;
-                if (data.config.spread) document.getElementById('spread').value = data.config.spread;
-                if (data.config.max_positions) {
-                    document.getElementById('max_positions').value = data.config.max_positions;
-                    // Only re-render lots if the count changed significantly or first load
-                    // But to be safe and simple, we can check if the number of inputs matches
-                    const currentInputs = document.querySelectorAll('.lot-input').length;
-                    if (currentInputs !== data.config.max_positions) {
-                        renderLotInputs(data.config.step_lots);
-                    } else {
-                        // Update values if inputs exist
-                        if (data.config.step_lots) {
-                            data.config.step_lots.forEach((lot, idx) => {
-                                const input = document.getElementById(`lot_${idx}`);
-                                if (input && document.activeElement !== input) input.value = lot;
-                            });
-                        }
-                    }
-                }
-
-                if (data.config.buy_stop_tp) document.getElementById('buy_stop_tp').value = data.config.buy_stop_tp;
-                if (data.config.buy_stop_sl) document.getElementById('buy_stop_sl').value = data.config.buy_stop_sl;
-                if (data.config.sell_stop_tp) document.getElementById('sell_stop_tp').value = data.config.sell_stop_tp;
-                if (data.config.sell_stop_sl) document.getElementById('sell_stop_sl').value = data.config.sell_stop_sl;
-
-                if (data.config.max_runtime_minutes) document.getElementById('max_runtime_minutes').value = data.config.max_runtime_minutes;
-                if (data.config.max_drawdown_usd) document.getElementById('max_drawdown_usd').value = data.config.max_drawdown_usd;
-
-                // Max positions display
-                document.getElementById('max-pos-display').textContent = data.config.max_positions;
-            }
-        }
-
-        function renderLotInputs(existingLots = []) {
-            const maxPosInput = document.getElementById('max_positions');
-            let count = parseInt(maxPosInput.value);
-
-            if (count > 20) {
-                alert("Max positions cannot exceed 20");
-                maxPosInput.value = 20;
-                count = 20;
-            }
-            if (count < 1) {
-                maxPosInput.value = 1;
-                count = 1;
-            }
-
-            const container = document.getElementById('lots-container');
-            container.innerHTML = '';
-
-            for (let i = 0; i < count; i++) {
-                const val = existingLots[i] !== undefined ? existingLots[i] : 0.01;
-                const div = document.createElement('div');
-                div.innerHTML = `
-                    <input type="number" id="lot_${i}" class="lot-input w-full p-1 text-xs rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none" 
-                    step="0.01" value="${val}" placeholder="Step ${i + 1}">
-                `;
-                container.appendChild(div);
-            }
-        }
-
-
-        async function toggleBot() {
-            const btn = document.getElementById('toggle-btn');
-            const isStop = btn.textContent.includes("Stop");
-            const endpoint = isStop ? '/control/stop' : '/control/start';
-            const res = await fetch(endpoint, { method: 'POST', headers: { 'X-Session-ID': sessionId } });
-
-            if (res.status === 401) {
-                localStorage.removeItem('session_id');
-                location.reload();
-                return;
-            }
-
-            fetchStatus(); // immediate update
+                const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionToken}` };
+                const opts = { method, headers };
+                if (body) opts.body = JSON.stringify(body);
+                const res = await fetch(endpoint, opts);
+                if (res.status === 401) { await supabase.auth.signOut(); return null; }
+                return await res.json();
+            } catch (e) { log("❌ Network Error"); }
         }
 
         async function updateConfig(e) {
             e.preventDefault();
-
-            // to gather lots
-            const maxPos = Number(document.getElementById('max_positions').value);
+            const maxPos = parseInt(document.getElementById('max_positions').value) || 5;
             const stepLots = [];
             for (let i = 0; i < maxPos; i++) {
                 const el = document.getElementById(`lot_${i}`);
-                stepLots.push(el ? Number(el.value) : 0.01);
+                stepLots.push(el ? parseFloat(el.value) || 0.01 : 0.01);
             }
-
             const payload = {
                 symbol: document.getElementById('symbol').value,
-                spread: Number(document.getElementById('spread').value),
+                spread: parseFloat(document.getElementById('spread').value) || 8,
                 max_positions: maxPos,
                 step_lots: stepLots,
-                buy_stop_tp: Number(document.getElementById('buy_stop_tp').value),
-                buy_stop_sl: Number(document.getElementById('buy_stop_sl').value),
-                sell_stop_tp: Number(document.getElementById('sell_stop_tp').value),
-                sell_stop_sl: Number(document.getElementById('sell_stop_sl').value),
-                max_runtime_minutes: Number(document.getElementById('max_runtime_minutes').value),
-                max_drawdown_usd: Number(document.getElementById('max_drawdown_usd').value)
+                buy_stop_tp: parseFloat(document.getElementById('buy_stop_tp').value) || 0,
+                buy_stop_sl: parseFloat(document.getElementById('buy_stop_sl').value) || 0,
+                sell_stop_tp: parseFloat(document.getElementById('sell_stop_tp').value) || 0,
+                sell_stop_sl: parseFloat(document.getElementById('sell_stop_sl').value) || 0,
+                max_runtime_minutes: parseInt(document.getElementById('max_runtime_minutes').value) || 0,
+                max_drawdown_usd: parseFloat(document.getElementById('max_drawdown_usd').value) || 0
             };
+            const res = await apiCall('/config', 'POST', payload);
+            if (res) log("✅ Settings Updated.");
+        }
 
-            const res = await fetch('/config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-Session-ID': sessionId },
-                body: JSON.stringify(payload)
-            });
+        async function fetchStatus() {
+            const data = await apiCall('/status');
+            if (!data) return;
 
-            if (res.status === 401) {
-                localStorage.removeItem('session_id');
-                location.reload();
-                return;
+            // 1. Update Live Price & Stats (Always)
+            if (data.current_price) document.getElementById('price-display').textContent = data.current_price.toFixed(5);
+            document.getElementById('pos-count').textContent = data.positions_count || 0;
+            document.getElementById('pending-count').textContent = data.pending_orders_count || 0;
+
+            // 2. Logic to log start/stop events ONLY
+            const badge = document.getElementById('status-badge');
+
+            if (data.running) {
+                // Was Stopped, Now Running
+                if (!lastRunningState) {
+                    log("🚀 Bot Started.");
+                }
+                lastRunningState = true;
+
+                badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div> Running';
+                document.getElementById('toggle-btn').textContent = "Stop Bot";
+                document.getElementById('toggle-btn').className = "px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded";
+            } else {
+                // Was Running, Now Stopped
+                if (lastRunningState) {
+                    log("🛑 Bot Stopped (User or Condition Met).");
+                }
+                lastRunningState = false;
+
+                badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-slate-400"></div> Stopped';
+                document.getElementById('toggle-btn').textContent = "Start Bot";
+                document.getElementById('toggle-btn').className = "px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded";
             }
+        }
 
-            log("Configuration updated.");
+        async function loadConfig() {
+            const cfg = await apiCall('/config');
+            if (cfg) {
+                if (cfg.symbol) document.getElementById('symbol').value = cfg.symbol;
+                if (cfg.spread) document.getElementById('spread').value = cfg.spread;
+                if (cfg.max_positions) {
+                    document.getElementById('max_positions').value = cfg.max_positions;
+                    document.getElementById('max-pos-disp').textContent = cfg.max_positions;
+                    renderLotInputs(cfg.step_lots);
+                }
+                ['buy_stop_tp', 'buy_stop_sl', 'sell_stop_tp', 'sell_stop_sl', 'max_runtime_minutes', 'max_drawdown_usd'].forEach(k => {
+                    if (cfg[k] !== undefined) document.getElementById(k).value = cfg[k];
+                });
+            }
+        }
+
+        async function toggleBot() {
+            const btn = document.getElementById('toggle-btn');
+            const action = btn.textContent.includes('Start') ? 'start' : 'stop';
+            // Log manually on user click
+            if (action === 'start') log("⏳ Starting...");
+            else log("⏳ Stopping...");
+
+            await apiCall(`/control/${action}`, 'POST');
             fetchStatus();
         }
 
-        function log(msg) {
-            const el = document.getElementById('logs');
-            const row = document.createElement('div');
-            row.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            el.prepend(row);
+        function renderLotInputs(existing = []) {
+            const count = parseInt(document.getElementById('max_positions').value) || 1;
+            const container = document.getElementById('lots-container');
+            container.innerHTML = '';
+            for (let i = 0; i < count; i++) {
+                const val = existing[i] || 0.01;
+                container.innerHTML += `<input type="number" id="lot_${i}" step="0.01" value="${val}" class="p-1 text-xs rounded bg-slate-900 border border-slate-600 text-center">`;
+            }
         }
 
-        // Init
-        initTheme();
-        initSupabase();
+        function logout() { supabase.auth.signOut(); }
+        function startPolling() { if (updateInterval) clearInterval(updateInterval); updateInterval = setInterval(fetchStatus, 1000); }
+        function log(msg) { document.getElementById('logs').innerHTML = `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>` + document.getElementById('logs').innerHTML; }
 
+        initSupabase();
+        renderLotInputs();
     </script>
 </body>
+
 
 </html>

@@ -1,4 +1,3 @@
-import asyncio
 import uuid
 from typing import Dict
 from core.config_manager import ConfigManager
@@ -6,39 +5,41 @@ from core.strategy_engine import GridStrategy
 
 class BotManager:
     def __init__(self):
+        # Maps user_id -> GridStrategy
         self.bots: Dict[str, GridStrategy] = {}
 
-    async def create_bot(self, token: str, app_id: str) -> str:
+    async def get_or_create_bot(self, user_id: str) -> GridStrategy:
         """
-        Creates a new bot instance for a user.
-        Returns: session_id
+        Retrieves an existing bot for the user, or creates a new one 
+        if the server restarted or it doesn't exist.
         """
-        session_id = str(uuid.uuid4())
+        # 1. Return existing instance if in memory
+        if user_id in self.bots:
+            return self.bots[user_id]
         
-        # Initialize ConfigManager with unique session ID
-        config_manager = ConfigManager(user_id=session_id)
+        # 2. Re-initialize bot for this user (restores config from DB/File)
+        print(f"🔄 Restoring/Creating bot session for User: {user_id}")
+        config_manager = ConfigManager(user_id=user_id)
         
-        # Initialize Strategy (No DerivClient needed)
+        # Initialize Strategy
         strategy = GridStrategy(config_manager)
         
         # Start Ticker (Passive)
         await strategy.start_ticker()
         
         # Store in memory
-        self.bots[session_id] = strategy
-        
-        print(f"Bot created for session: {session_id}")
-        return session_id
+        self.bots[user_id] = strategy
+        return strategy
 
-    def get_bot(self, session_id: str) -> GridStrategy:
-        return self.bots.get(session_id)
+    def get_bot(self, user_id: str) -> GridStrategy:
+        return self.bots.get(user_id)
 
-    async def stop_bot(self, session_id: str):
-        bot = self.bots.get(session_id)
+    async def stop_bot(self, user_id: str):
+        bot = self.bots.get(user_id)
         if bot:
             await bot.stop()
-            print(f"Bot stopped for session: {session_id}")
+            print(f"Bot stopped for user: {user_id}")
 
     async def stop_all(self):
-        for session_id in list(self.bots.keys()):
-            await self.stop_bot(session_id)
+        for user_id in list(self.bots.keys()):
+            await self.stop_bot(user_id)
