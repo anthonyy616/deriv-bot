@@ -8,6 +8,7 @@ import os
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 import traceback
+from datetime import datetime, timedelta
 
 # Load environment variables
 load_dotenv()
@@ -133,7 +134,6 @@ app = FastAPI(title="MT5 Bridge", lifespan=lifespan)
 # --- Endpoints ---
 
 @app.post("/execute_signal")
-@app.post("/execute_signal")
 async def execute_trade(signal: TradeSignal):
     try:
         # 1. Check Connection
@@ -236,6 +236,41 @@ def get_account_info():
         "current_price": tick.ask if tick else 0,
         "symbol": SYMBOL
     }
+
+@app.post("/close_all")
+def close_all_positions():
+    if not mt5.terminal_info(): raise HTTPException(500, "Disconnected")
+    positions = mt5.positions_get(symbol=SYMBOL)
+    if not positions: return {"message": "No positions to close"}
+    
+    count = 0
+    for pos in positions:
+        tick = mt5.symbol_info_tick(pos.symbol)
+        price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
+        type_op = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
+        
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "symbol": pos.symbol,
+            "volume": pos.volume,
+            "type": type_op,
+            "position": pos.ticket,
+            "price": price,
+            "magic": pos.magic,
+            "comment": "Close All",
+        }
+        res = mt5.order_send(request)
+        if res and res.retcode == mt5.TRADE_RETCODE_DONE: count += 1
+        
+    return {"closed": count}
+
+@app.get("/recent_deals")
+def get_recent_deals(seconds: int = 60):
+    if not mt5.terminal_info(): return []
+    from_date = datetime.now() - timedelta(seconds=seconds)
+    deals = mt5.history_deals_get(from_date, datetime.now())
+    if not deals: return []
+    return [{"ticket": d.ticket, "profit": d.profit, "symbol": d.symbol, "comment": d.comment} for d in deals if d.symbol == SYMBOL]
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=BRIDGE_PORT)

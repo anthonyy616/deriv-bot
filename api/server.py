@@ -45,10 +45,12 @@ class ConnectRequest(BaseModel):
 class ConfigUpdate(BaseModel):
     symbol: str | None = None
     spread: float | None = None
-    tp_dist: float | None = None
-    sl_dist: float | None = None
+    step_lots: list[float] | None = None
+    buy_stop_tp: float | None = None
+    buy_stop_sl: float | None = None
+    sell_stop_tp: float | None = None
+    sell_stop_sl: float | None = None
     max_positions: int | None = None
-    lot_size: float | None = None
     max_runtime_minutes: int | None = None
     max_drawdown_usd: float | None = None
 

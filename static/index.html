@@ -355,39 +355,68 @@
                             value="100">
                     </div>
 
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-xs font-medium mb-1.5 text-slate-500">Max Positions</label>
-                            <input type="number" id="max_positions"
-                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
-                                value="7">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium mb-1.5 text-slate-500">Lot Size</label>
-                            <input type="number" id="lot_size"
-                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
-                                step="0.01" value="0.01">
-                        </div>
+                    <div>
+                        <label class="block text-xs font-medium mb-1.5 text-slate-500">Max Positions (Max 20)</label>
+                        <input type="number" id="max_positions"
+                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
+                            value="5" min="1" max="20" onchange="renderLotInputs()">
                     </div>
+            </div>
 
-                    <div class="grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="block text-xs font-medium mb-1.5 text-slate-500">Max Runtime (Min)</label>
-                            <input type="number" id="max_runtime_minutes"
-                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
-                                placeholder="0 (Infinite)">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium mb-1.5 text-red-400">Max Drawdown ($)</label>
-                            <input type="number" id="max_drawdown_usd"
-                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-red-900/30 focus:border-red-500 outline-none"
-                                step="1" placeholder="50">
-                        </div>
+            <!-- Dynamic Lot Sizes -->
+            <div>
+                <label class="block text-xs font-medium mb-1.5 text-slate-500">Step Lot Sizes</label>
+                <div id="lots-container"
+                    class="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto p-1 border border-slate-100 dark:border-slate-700 rounded">
+                    <!-- Dynamic Inputs Generated Here -->
+                </div>
+            </div>
+
+            <!-- Split TP/SL -->
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-medium mb-1.5 text-green-500">Buy Stop TP ($)</label>
+                    <input type="number" id="buy_stop_tp"
+                        class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-green-500 outline-none"
+                        step="0.1" value="16">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium mb-1.5 text-red-500">Buy Stop SL ($)</label>
+                    <input type="number" id="buy_stop_sl"
+                        class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-red-500 outline-none"
+                        step="0.1" value="24">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium mb-1.5 text-green-500">Sell Stop TP ($)</label>
+                    <input type="number" id="sell_stop_tp"
+                        class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-green-500 outline-none"
+                        step="0.1" value="16">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium mb-1.5 text-red-500">Sell Stop SL ($)</label>
+                    <input type="number" id="sell_stop_sl"
+                        class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-red-500 outline-none"
+                        step="0.1" value="24">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-medium mb-1.5 text-slate-500">Max Runtime (Min)</label>
+                        <input type="number" id="max_runtime_minutes"
+                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none"
+                            placeholder="0 (Infinite)">
                     </div>
+                    <div>
+                        <label class="block text-xs font-medium mb-1.5 text-red-400">Max Drawdown ($)</label>
+                        <input type="number" id="max_drawdown_usd"
+                            class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-red-900/30 focus:border-red-500 outline-none"
+                            step="1" placeholder="50">
+                    </div>
+                </div>
 
-                    <button type="submit"
-                        class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition">Update
-                        Settings</button>
+                <button type="submit"
+                    class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition">Update
+                    Settings</button>
                 </form>
             </div>
 
@@ -584,8 +613,29 @@
             if (data.config && document.activeElement.tagName !== "INPUT") {
                 if (data.config.symbol) document.getElementById('symbol').value = data.config.symbol;
                 if (data.config.spread) document.getElementById('spread').value = data.config.spread;
-                if (data.config.max_positions) document.getElementById('max_positions').value = data.config.max_positions;
-                if (data.config.lot_size) document.getElementById('lot_size').value = data.config.lot_size;
+                if (data.config.max_positions) {
+                    document.getElementById('max_positions').value = data.config.max_positions;
+                    // Only re-render lots if the count changed significantly or first load
+                    // But to be safe and simple, we can check if the number of inputs matches
+                    const currentInputs = document.querySelectorAll('.lot-input').length;
+                    if (currentInputs !== data.config.max_positions) {
+                        renderLotInputs(data.config.step_lots);
+                    } else {
+                        // Update values if inputs exist
+                        if (data.config.step_lots) {
+                            data.config.step_lots.forEach((lot, idx) => {
+                                const input = document.getElementById(`lot_${idx}`);
+                                if (input && document.activeElement !== input) input.value = lot;
+                            });
+                        }
+                    }
+                }
+
+                if (data.config.buy_stop_tp) document.getElementById('buy_stop_tp').value = data.config.buy_stop_tp;
+                if (data.config.buy_stop_sl) document.getElementById('buy_stop_sl').value = data.config.buy_stop_sl;
+                if (data.config.sell_stop_tp) document.getElementById('sell_stop_tp').value = data.config.sell_stop_tp;
+                if (data.config.sell_stop_sl) document.getElementById('sell_stop_sl').value = data.config.sell_stop_sl;
+
                 if (data.config.max_runtime_minutes) document.getElementById('max_runtime_minutes').value = data.config.max_runtime_minutes;
                 if (data.config.max_drawdown_usd) document.getElementById('max_drawdown_usd').value = data.config.max_drawdown_usd;
 
@@ -593,6 +643,35 @@
                 document.getElementById('max-pos-display').textContent = data.config.max_positions;
             }
         }
+
+        function renderLotInputs(existingLots = []) {
+            const maxPosInput = document.getElementById('max_positions');
+            let count = parseInt(maxPosInput.value);
+
+            if (count > 20) {
+                alert("Max positions cannot exceed 20");
+                maxPosInput.value = 20;
+                count = 20;
+            }
+            if (count < 1) {
+                maxPosInput.value = 1;
+                count = 1;
+            }
+
+            const container = document.getElementById('lots-container');
+            container.innerHTML = '';
+
+            for (let i = 0; i < count; i++) {
+                const val = existingLots[i] !== undefined ? existingLots[i] : 0.01;
+                const div = document.createElement('div');
+                div.innerHTML = `
+                    <input type="number" id="lot_${i}" class="lot-input w-full p-1 text-xs rounded bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 focus:border-blue-500 outline-none" 
+                    step="0.01" value="${val}" placeholder="Step ${i + 1}">
+                `;
+                container.appendChild(div);
+            }
+        }
+
 
         async function toggleBot() {
             const btn = document.getElementById('toggle-btn');
@@ -604,11 +683,24 @@
 
         async function updateConfig(e) {
             e.preventDefault();
+
+            // Gather lots
+            const maxPos = Number(document.getElementById('max_positions').value);
+            const stepLots = [];
+            for (let i = 0; i < maxPos; i++) {
+                const el = document.getElementById(`lot_${i}`);
+                stepLots.push(el ? Number(el.value) : 0.01);
+            }
+
             const payload = {
                 symbol: document.getElementById('symbol').value,
                 spread: Number(document.getElementById('spread').value),
-                max_positions: Number(document.getElementById('max_positions').value),
-                lot_size: Number(document.getElementById('lot_size').value),
+                max_positions: maxPos,
+                step_lots: stepLots,
+                buy_stop_tp: Number(document.getElementById('buy_stop_tp').value),
+                buy_stop_sl: Number(document.getElementById('buy_stop_sl').value),
+                sell_stop_tp: Number(document.getElementById('sell_stop_tp').value),
+                sell_stop_sl: Number(document.getElementById('sell_stop_sl').value),
                 max_runtime_minutes: Number(document.getElementById('max_runtime_minutes').value),
                 max_drawdown_usd: Number(document.getElementById('max_drawdown_usd').value)
             };

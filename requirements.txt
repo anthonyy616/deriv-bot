@@ -6,3 +6,4 @@ ta-lib
 schedule
 MetaTrader5
 requests
+pydantic
