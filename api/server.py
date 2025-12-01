@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from typing import List, Optional  # <--- Make sure to import List
 from core.bot_manager import BotManager
 import asyncio
 import os
@@ -42,15 +43,20 @@ async def get_env():
 class ConnectRequest(BaseModel):
     name: str = "Trader"
 
+# --- UPDATED CONFIG MODEL (Fixes 400 Error) ---
 class ConfigUpdate(BaseModel):
     symbol: str | None = None
     spread: float | None = None
-    step_lots: list[float] | None = None
+    # New Fields for Split TP/SL
     buy_stop_tp: float | None = None
     buy_stop_sl: float | None = None
     sell_stop_tp: float | None = None
     sell_stop_sl: float | None = None
+    # New Fields for Lots
+    step_lots: List[float] | None = None
+    # Existing
     max_positions: int | None = None
+    lot_size: float | None = None
     max_runtime_minutes: int | None = None
     max_drawdown_usd: float | None = None
 
@@ -66,7 +72,6 @@ async def get_bot_or_raise(x_session_id: str = Header(None)):
 @app.post("/connect")
 async def connect(request: ConnectRequest):
     try:
-        # No token/app_id needed anymore. Just create a session.
         session_id = await bot_manager.create_bot(token="dummy", app_id="dummy")
         return {"session_id": session_id, "message": "Connected successfully"}
     except Exception as e:
@@ -79,10 +84,11 @@ async def get_config(bot = Depends(get_bot_or_raise)):
 @app.post("/config")
 async def update_config(config: ConfigUpdate, bot = Depends(get_bot_or_raise)):
     old_symbol = bot.config.get('symbol')
-    new_config = {k: v for k, v in config.dict().items() if v is not None}
+    # Filter out None values so we don't overwrite existing settings with Null
+    new_config = {k: v for k, v in config.model_dump().items() if v is not None}
+    
     updated = bot.config_manager.update_config(new_config)
     
-    # If symbol changed, restart ticker
     if config.symbol and config.symbol != old_symbol:
         print(f"Symbol changed from {old_symbol} to {config.symbol}. Restarting ticker...")
         await bot.start_ticker()
@@ -93,8 +99,6 @@ async def update_config(config: ConfigUpdate, bot = Depends(get_bot_or_raise)):
 async def start_bot(bot = Depends(get_bot_or_raise)):
     if bot.running:
         return {"message": "Bot is already running"}
-    
-    # Start the strategy in the background
     asyncio.create_task(bot.start())
     return {"message": "Bot started"}
 
@@ -102,7 +106,6 @@ async def start_bot(bot = Depends(get_bot_or_raise)):
 async def stop_bot(bot = Depends(get_bot_or_raise)):
     if not bot.running:
         return {"message": "Bot is not running"}
-    
     await bot.stop()
     return {"message": "Bot stopped"}
 
@@ -113,6 +116,7 @@ async def get_status(x_session_id: str = Header(None)):
 
     bot = bot_manager.get_bot(x_session_id)
     if not bot:
-        raise HTTPException(status_code=401, detail="Invalid or expired session")
+        # This returns 401 if bot is not found (e.g. after server restart)
+        return {"status": "Invalid Session", "running": False} 
         
     return bot.get_status()

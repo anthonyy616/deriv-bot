@@ -18,7 +18,7 @@ class GridStrategy:
         self.initial_balance = 0
         self.mt5_bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
         
-        # Strategy State
+        # FIXED LEVELS (The "Channel")
         self.upper_level = None
         self.lower_level = None
         self.current_step = 0
@@ -42,6 +42,7 @@ class GridStrategy:
         asyncio.create_task(self.main_loop())
 
     def reset_state(self):
+        """Resets the iteration state to allow a fresh start."""
         self.pending_orders = []
         self.positions = []
         self.iteration_state = "idle"
@@ -58,7 +59,7 @@ class GridStrategy:
             
             # 2. Check Stopping Conditions (TP/SL/Max)
             if await self.check_stopping_conditions():
-                continue # If stopped or reset, skip processing
+                continue # If reset occurred, skip to next loop
 
     async def on_external_tick(self, tick_data):
         if not self.running: return
@@ -97,23 +98,24 @@ class GridStrategy:
                 await self.execute_trade_and_chain(triggered_order, ask, bid, point)
 
     async def place_initial_brackets(self, ask, bid, point):
-        """Sets the fixed Upper and Lower levels based on initial spread."""
+        """Calculates Fixed Upper/Lower levels and locks them in."""
         user_spread_usd = self.config.get('spread', 8)
         
-        # Define Fixed Levels
+        # LOCK IN THE LEVELS (Ping-Pong Center)
         self.upper_level = ask + user_spread_usd
         self.lower_level = bid - user_spread_usd
         
-        print(f"🎯 Initial Grid: Upper={self.upper_level:.2f} | Lower={self.lower_level:.2f}")
+        print(f"🎯 New Iteration: Upper Locked @ {self.upper_level:.2f} | Lower Locked @ {self.lower_level:.2f}")
 
-        # Create Virtual Orders
+        # Create Initial Orders at these levels
         self.pending_orders = [
             self.create_virtual_order('BUY_STOP', self.upper_level, point),
             self.create_virtual_order('SELL_STOP', self.lower_level, point)
         ]
 
     def create_virtual_order(self, order_type, price, point):
-        # Get TP/SL from Config (Split Inputs)
+        """Creates order dict with correct Unit Conversion ($ -> Points)."""
+        # Get TP/SL in DOLLARS (User Input)
         if 'BUY' in order_type:
             tp_usd = self.config.get('buy_stop_tp', 16)
             sl_usd = self.config.get('buy_stop_sl', 24)
@@ -121,6 +123,8 @@ class GridStrategy:
             tp_usd = self.config.get('sell_stop_tp', 16)
             sl_usd = self.config.get('sell_stop_sl', 24)
             
+        # CONVERSION: Dollars / PointValue = MT5 Points
+        # Example: $10 / 0.01 = 1000 Points
         return {
             'type': order_type,
             'price': price,
@@ -131,10 +135,11 @@ class GridStrategy:
     async def execute_trade_and_chain(self, order, ask, bid, point):
         # 1. Get Lot Size for Current Step
         step_lots = self.config.get('step_lots', [])
+        # Ensure we don't go out of bounds
         if self.current_step < len(step_lots):
-            volume = step_lots[self.current_step]
+            volume = float(step_lots[self.current_step])
         else:
-            volume = step_lots[-1] if step_lots else 0.01
+            volume = float(step_lots[-1]) if step_lots else 0.01
             
         # 2. Execute Trade
         action = "buy" if order['type'] == 'BUY_STOP' else "sell"
@@ -151,28 +156,33 @@ class GridStrategy:
             response = requests.post(f"{self.mt5_bridge_url}/execute_signal", json=payload, timeout=2)
             if response.status_code == 200:
                 data = response.json()
-                print(f"✅ Trade OPENED: {data.get('order_id')} | Step {self.current_step}")
+                print(f"✅ Trade OPENED: {data.get('order_id')} | Step {self.current_step} | Lot {volume}")
                 self.positions.append(data)
                 self.current_step += 1
                 
-                # 3. Ping-Pong Logic (Update Pending Orders)
+                # 3. PING-PONG LOGIC
+                # Clear pending orders
                 self.pending_orders.clear()
                 
-                if self.current_step < self.config.get('max_positions', 5):
+                max_pos = self.config.get('max_positions', 5)
+                
+                if self.current_step < max_pos:
                     if action == "buy":
-                        # If Buy triggered, place Sell Stop at Lower Level
+                        # At Upper Level -> Place SELL STOP at Lower Level
                         self.pending_orders.append(
                             self.create_virtual_order('SELL_STOP', self.lower_level, point)
                         )
-                        print(f"   🏓 Ping: Placed SELL STOP at {self.lower_level:.2f}")
-                    else:
-                        # If Sell triggered, place Buy Stop at Upper Level
+                        print(f"   🏓 Ping: Waiting for Price to Drop to {self.lower_level:.2f}")
+                        
+                    else: # action == "sell"
+                        # At Lower Level -> Place BUY STOP at Upper Level
                         self.pending_orders.append(
                             self.create_virtual_order('BUY_STOP', self.upper_level, point)
                         )
-                        print(f"   🏓 Pong: Placed BUY STOP at {self.upper_level:.2f}")
+                        print(f"   🏓 Pong: Waiting for Price to Rise to {self.upper_level:.2f}")
                 else:
-                    print("🛑 Max positions reached. Waiting for outcome.")
+                    print("🛑 Max positions reached. Waiting for TP or SL...")
+                    self.iteration_state = "max_cap_reached"
                     
             else:
                 print(f"❌ Execution Failed: {response.text}")
@@ -193,31 +203,30 @@ class GridStrategy:
             sl_hit = False
             
             for deal in deals:
-                # Check if this deal belongs to our session (optional, but good)
-                # For now, assume all deals on this symbol are relevant
                 if deal['profit'] > 0:
                     tp_hit = True
                 elif deal['profit'] < 0:
                     sl_hit = True
             
+            # LOGIC: If TP or SL is hit, close everything and restart iteration
             if tp_hit:
-                print("🎉 Take Profit Hit! Restarting Strategy...")
+                print("🎉 Take Profit Hit! Resetting Iteration...")
                 await self.close_all_and_restart()
                 return True
                 
             if sl_hit:
-                print("💀 Stop Loss Hit!")
-                # Check Max Positions Rule
-                max_pos = self.config.get('max_positions', 5)
-                # Note: self.positions might not be perfectly synced, but current_step is
-                if self.current_step >= max_pos:
-                     print("   And Max Positions Reached. STOPPING BOT.")
-                     await self.stop_bot_completely()
-                     return True
-                else:
-                     print("   Stopping Bot (Standard SL Rule).")
-                     await self.stop_bot_completely()
-                     return True
+                print("💀 Stop Loss Hit! Resetting Iteration...")
+                await self.close_all_and_restart()
+                return True
+
+            # Max Time Check
+            max_mins = self.config.get('max_runtime_minutes', 0)
+            if max_mins > 0:
+                elapsed = (time.time() - self.start_time) / 60
+                if elapsed >= max_mins:
+                    print("⏰ Time Limit Reached. Stopping Bot.")
+                    await self.stop_bot_completely()
+                    return True
 
         except Exception as e:
             print(f"Error checking stopping conditions: {e}")
@@ -225,14 +234,16 @@ class GridStrategy:
         return False
 
     async def close_all_and_restart(self):
+        """Closes all trades, resets state, and starts a fresh grid."""
         try:
             requests.post(f"{self.mt5_bridge_url}/close_all", timeout=2)
         except: pass
         
         self.reset_state()
-        print("🔄 Strategy Reset. Waiting for next tick...")
+        print("🔄 System Reset. Calculating new levels on next tick...")
 
     async def stop_bot_completely(self):
+        """Closes trades and STOPS the bot."""
         try:
             requests.post(f"{self.mt5_bridge_url}/close_all", timeout=2)
         except: pass
@@ -240,14 +251,8 @@ class GridStrategy:
         await self.stop()
 
     def update_positions(self):
-        # Sync position count from bridge
-        try:
-            res = requests.get(f"{self.mt5_bridge_url}/account_info", timeout=1)
-            if res.status_code == 200:
-                data = res.json()
-                # We can update self.positions list if needed, but count is enough for UI
-                pass
-        except: pass
+        # Sync position count from bridge if needed
+        pass
 
     def get_account_balance(self):
         try:
@@ -260,7 +265,7 @@ class GridStrategy:
             "running": self.running,
             "symbol": self.symbol,
             "current_price": self.cmp,
-            "positions_count": self.current_step, # Use step as proxy for open positions count
+            "positions_count": self.current_step, 
             "pending_orders_count": len(self.pending_orders),
             "config": self.config,
             "iteration": self.iteration,
