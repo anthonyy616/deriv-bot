@@ -677,14 +677,21 @@
             const btn = document.getElementById('toggle-btn');
             const isStop = btn.textContent.includes("Stop");
             const endpoint = isStop ? '/control/stop' : '/control/start';
-            await fetch(endpoint, { method: 'POST', headers: { 'X-Session-ID': sessionId } });
-            fetchStatus(); // Immediate update
+            const res = await fetch(endpoint, { method: 'POST', headers: { 'X-Session-ID': sessionId } });
+
+            if (res.status === 401) {
+                localStorage.removeItem('session_id');
+                location.reload();
+                return;
+            }
+
+            fetchStatus(); // immediate update
         }
 
         async function updateConfig(e) {
             e.preventDefault();
 
-            // Gather lots
+            // to gather lots
             const maxPos = Number(document.getElementById('max_positions').value);
             const stepLots = [];
             for (let i = 0; i < maxPos; i++) {
@@ -705,11 +712,18 @@
                 max_drawdown_usd: Number(document.getElementById('max_drawdown_usd').value)
             };
 
-            await fetch('/config', {
+            const res = await fetch('/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Session-ID': sessionId },
                 body: JSON.stringify(payload)
             });
+
+            if (res.status === 401) {
+                localStorage.removeItem('session_id');
+                location.reload();
+                return;
+            }
+
             log("Configuration updated.");
             fetchStatus();
         }

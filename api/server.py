@@ -113,6 +113,6 @@ async def get_status(x_session_id: str = Header(None)):
 
     bot = bot_manager.get_bot(x_session_id)
     if not bot:
-        return {"status": "Invalid Session", "running": False}
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
         
     return bot.get_status()
