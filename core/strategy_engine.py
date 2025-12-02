@@ -12,28 +12,32 @@ class GridStrategy:
         # Connection
         self.mt5_bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
         
-        # State - Fixed Levels
-        self.fixed_upper = None
-        self.fixed_lower = None
-        self.prev_ask = None
-        self.prev_bid = None
+        # --- State Management ---
+        # 1. Fixed Price Levels
+        self.level_top = None    # Initial + Spread
+        self.level_bottom = None # Initial - Spread
+        self.level_center = None # Initial Price
+        
+        # 2. Logic State (The "Stack")
+        self.state = "START"
         
         self.current_step = 0
         self.last_trigger_time = 0
-        self.current_price = 0 # For UI display
+        self.current_price = 0 
         self.session = None
+        self.start_time = 0 
 
     @property
     def config(self):
         return self.config_manager.get_config()
 
     async def start_ticker(self):
-        # Reset state when config changes
         self.reset_cycle()
 
     async def start(self):
         self.running = True
         self.session = aiohttp.ClientSession()
+        self.start_time = time.time()
         self.reset_cycle()
         print(f"✅ Strategy Started. Symbol: {self.symbol}")
 
@@ -45,21 +49,22 @@ class GridStrategy:
         print("🛑 Strategy Stopped.")
 
     def reset_cycle(self):
-        """ Clears fixed levels to allow a fresh calculation on next tick """
-        self.fixed_upper = None
-        self.fixed_lower = None
-        self.prev_ask = None
-        self.prev_bid = None
+        """ Hard Reset: Clears levels and restarts iteration from scratch """
+        self.level_top = None
+        self.level_bottom = None
+        self.level_center = None
+        self.state = "START"
         self.current_step = 0
         self.last_trigger_time = 0
+        print("🔄 Cycle Reset: Waiting for new Initial Price...")
 
     async def on_external_tick(self, tick_data):
         if not self.running: return
         
-        # UI Update Helper
+        # UI Update
         self.current_price = tick_data['ask']
 
-        # 0. Check Stops (TP/SL)
+        # 0. Check Termination (TP/SL/Max)
         if await self.check_stopping_conditions():
             return
 
@@ -67,75 +72,81 @@ class GridStrategy:
         bid = tick_data['bid']
         point = tick_data.get('point', 0.001)
         
-        # 1. Initialize Levels ONCE
-        if self.fixed_upper is None:
-            spread_points = self.config.get('spread', 8)
-            spread_val = spread_points * point # Convert points to price value
+        # 1. Initialization (First Tick of Cycle)
+        if self.level_center is None:
+            spread_points = self.config.get('spread', 2) 
+            spread_val = spread_points * point 
             
-            # Set exact levels
-            self.fixed_upper = ask + spread_val
-            self.fixed_lower = bid - spread_val
+            self.level_center = ask # Anchor at current price
+            self.level_top = self.level_center + spread_val
+            self.level_bottom = self.level_center - spread_val
             
-            # Initialize Previous Prices to current to avoid immediate trigger
-            self.prev_ask = ask
-            self.prev_bid = bid
-            
-            print(f"🎯 Levels Locked: Upper={self.fixed_upper:.5f} | Lower={self.fixed_lower:.5f}")
+            print(f"🎯 Channel Created: Top={self.level_top:.5f} | Center={self.level_center:.5f} | Bottom={self.level_bottom:.5f}")
+            print(f"waiting for breakouts...")
             return
 
-        # 2. Check Triggers against LOCKED levels (CROSSING LOGIC)
+        # 2. Execute Ping-Pong Logic
         await self.execute_logic(ask, bid, point)
-        
-        # Update previous prices for next tick
-        self.prev_ask = ask
-        self.prev_bid = bid
 
     async def execute_logic(self, ask, bid, point):
-        # Cooldown check (0.5 seconds to prevent double-fire on same tick burst)
         if time.time() - self.last_trigger_time < 0.5:
             return
-
-        step_lots = self.config.get('step_lots', [])
-        # Use last lot if step exceeded
-        if self.current_step < len(step_lots):
-            current_vol = step_lots[self.current_step]
-        else:
-            current_vol = step_lots[-1] if step_lots else 0.01
 
         max_pos = self.config.get('max_positions', 5)
         if self.current_step >= max_pos:
             return
-        
-        # A. Check Upper Crossing (Buy)
-        # Trigger ONLY if we were below/at upper before, and now we are above/at
-        if self.prev_ask < self.fixed_upper and ask >= self.fixed_upper:
-            print(f"⚡ CROSS UP: Price ({ask}) crossed Upper ({self.fixed_upper:.5f}) -> BUY Signal")
-            success = await self.send_trade("buy", current_vol, self.config.get('buy_stop_tp'), self.config.get('buy_stop_sl'), point)
-            if success:
-                self.last_trigger_time = time.time()
-                self.current_step += 1
+            
+        step_lots = self.config.get('step_lots', [])
+        current_vol = step_lots[self.current_step] if self.current_step < len(step_lots) else (step_lots[-1] if step_lots else 0.01)
 
-        # B. Check Lower Crossing (Sell)
-        # Trigger ONLY if we were above/at lower before, and now we are below/at
-        elif self.prev_bid > self.fixed_lower and bid <= self.fixed_lower:
-            print(f"⚡ CROSS DOWN: Price ({bid}) crossed Lower ({self.fixed_lower:.5f}) -> SELL Signal")
-            success = await self.send_trade("sell", current_vol, self.config.get('sell_stop_tp'), self.config.get('sell_stop_sl'), point)
-            if success:
-                self.last_trigger_time = time.time()
-                self.current_step += 1
+        # --- THE STATE MACHINE ---
+        if self.state == "START":
+            if ask >= self.level_top:
+                print(f"⚡ Breakout UP: Hit Top ({self.level_top:.5f}) -> BUY")
+                if await self.send_trade("buy", current_vol, point):
+                    self.state = "TOP_HIT" 
+                    print(f"➡ Next Target: Sell at Center ({self.level_center:.5f})")
+            elif bid <= self.level_bottom:
+                print(f"⚡ Breakout DOWN: Hit Bottom ({self.level_bottom:.5f}) -> SELL")
+                if await self.send_trade("sell", current_vol, point):
+                    self.state = "BOTTOM_HIT" 
+                    print(f"➡ Next Target: Buy at Center ({self.level_center:.5f})")
 
-    async def send_trade(self, action, volume, tp_usd, sl_usd, point):
+        elif self.state == "TOP_HIT":
+            if bid <= self.level_center:
+                print(f"⚡ Pullback: Hit Center ({self.level_center:.5f}) -> SELL")
+                if await self.send_trade("sell", current_vol, point):
+                    self.state = "CENTER_FROM_TOP" 
+                    print(f"➡ Next Target: Buy at Top ({self.level_top:.5f})")
+
+        elif self.state == "BOTTOM_HIT":
+            if ask >= self.level_center:
+                print(f"⚡ Pullback: Hit Center ({self.level_center:.5f}) -> BUY")
+                if await self.send_trade("buy", current_vol, point):
+                    self.state = "CENTER_FROM_BOTTOM" 
+                    print(f"➡ Next Target: Sell at Bottom ({self.level_bottom:.5f})")
+
+        elif self.state == "CENTER_FROM_TOP":
+            if ask >= self.level_top:
+                print(f"⚡ Re-Test Top: Hit Top ({self.level_top:.5f}) -> BUY")
+                if await self.send_trade("buy", current_vol, point):
+                    self.state = "TOP_HIT"
+                    print(f"➡ Next Target: Sell at Center")
+
+        elif self.state == "CENTER_FROM_BOTTOM":
+            if bid <= self.level_bottom:
+                print(f"⚡ Re-Test Bottom: Hit Bottom ({self.level_bottom:.5f}) -> SELL")
+                if await self.send_trade("sell", current_vol, point):
+                    self.state = "BOTTOM_HIT"
+                    print(f"➡ Next Target: Buy at Center")
+
+    async def send_trade(self, action, volume, point):
         if not self.session: return False
         
-        # Safety checks
-        if volume <= 0: volume = 0.01
-        if point <= 0: point = 0.001
-
+        tp_usd = self.config.get('buy_stop_tp') if action == 'buy' else self.config.get('sell_stop_tp')
+        sl_usd = self.config.get('buy_stop_sl') if action == 'buy' else self.config.get('sell_stop_sl')
+        
         try:
-            # --- THE FIX ---
-            # Old Logic: int((abs(tp_usd) / volume) / point)  <-- This adjusted for lot size (Money)
-            # New Logic: int(abs(tp_usd) / point)             <-- This is pure distance
-            
             tp_points = int(abs(tp_usd) / point) if tp_usd > 0 else 0
             sl_points = int(abs(sl_usd) / point) if sl_usd > 0 else 0
         except:
@@ -153,32 +164,49 @@ class GridStrategy:
         
         try:
             async with self.session.post(f"{self.mt5_bridge_url}/execute_signal", json=payload, timeout=2) as resp:
-                return resp.status == 200
+                if resp.status == 200:
+                    self.current_step += 1
+                    self.last_trigger_time = time.time()
+                    return True
         except Exception as e:
             print(f"❌ Execution Error: {e}")
-            return False
+        return False
 
     async def check_stopping_conditions(self):
         if not self.session: return False
         try:
-            # Get deals from last 5 seconds to catch TP/SL hits
             async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=5", timeout=2) as resp:
                 if resp.status == 200:
                     deals = await resp.json()
                     tp_hit = any(d['profit'] > 0 for d in deals)
                     sl_hit = any(d['profit'] < 0 for d in deals)
-                    
                     if tp_hit or sl_hit:
                         log_msg = "🎉 TP Hit!" if tp_hit else "💀 SL Hit!"
                         print(f"{log_msg} Resetting Cycle...")
-                        
-                        # 1. Close/Delete EVERYTHING
                         await self.session.post(f"{self.mt5_bridge_url}/close_all", timeout=2)
-                        
-                        # 2. Reset Logic (Calculates new levels on next tick)
                         self.reset_cycle()
                         await asyncio.sleep(2) 
                         return True
+
+            async with self.session.get(f"{self.mt5_bridge_url}/account_info", timeout=2) as resp:
+                if resp.status == 200:
+                    info = await resp.json()
+                    balance = info.get('balance', 0)
+                    equity = info.get('equity', 0)
+                    max_dd = self.config.get('max_drawdown_usd', 0)
+                    if max_dd > 0 and (balance - equity) >= max_dd:
+                        print(f"🛑 Max Drawdown Reached. Stopping Bot.")
+                        await self.session.post(f"{self.mt5_bridge_url}/close_all", timeout=2)
+                        await self.stop()
+                        return True
+
+            max_runtime = self.config.get('max_runtime_minutes', 0)
+            if max_runtime > 0 and self.start_time > 0:
+                if (time.time() - self.start_time) / 60 >= max_runtime:
+                    print(f"🛑 Max Runtime Reached. Stopping Bot.")
+                    await self.session.post(f"{self.mt5_bridge_url}/close_all", timeout=2)
+                    await self.stop()
+                    return True
         except Exception:
             pass
         return False

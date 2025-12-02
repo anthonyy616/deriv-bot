@@ -9,7 +9,6 @@ from core.engine import TradingEngine
 from supabase import create_client, Client
 import asyncio
 import os
-import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -34,6 +33,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # 2. Initialize Core Systems
 bot_manager = BotManager()
+# CRITICAL: Initialize the Engine that drives the bots
 trading_engine = TradingEngine(bot_manager)
 
 # 3. Start the Engine Loop on Server Startup
@@ -55,10 +55,6 @@ class ConfigUpdate(BaseModel):
     max_drawdown_usd: float | None = None
 
 # --- Dependency: Verify Supabase Token & Get Bot ---
-# Simple in-memory cache: {token: (user_id, timestamp)}
-TOKEN_CACHE = {}
-CACHE_DURATION = 300  # 5 minutes
-
 async def get_current_bot(request: Request):
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -66,36 +62,17 @@ async def get_current_bot(request: Request):
     
     token = auth_header.split(" ")[1]
     
-    user_id = None
-    now = time.time()
-    
-    # 1. Check Cache
-    if token in TOKEN_CACHE:
-        cached_uid, cached_time = TOKEN_CACHE[token]
-        if now - cached_time < CACHE_DURATION:
-            user_id = cached_uid
-    
-    # 2. Verify with Supabase (if not cached)
-    if not user_id:
-        try:
-            # Run blocking Supabase call in a separate thread
-            def verify_token():
-                return supabase.auth.get_user(token)
-            
-            user_data = await asyncio.to_thread(verify_token)
-            
-            if not user_data or not user_data.user:
-                 raise HTTPException(status_code=401, detail="Invalid Supabase Token")
-            
-            user_id = user_data.user.id
-            # Update Cache
-            TOKEN_CACHE[token] = (user_id, now)
-            
-        except Exception as e:
-            print(f"Auth Error: {e}")
-            raise HTTPException(status_code=401, detail="Session expired")
+    try:
+        user_data = supabase.auth.get_user(token)
+        if not user_data or not user_data.user:
+             raise HTTPException(status_code=401, detail="Invalid Supabase Token")
 
-    return await bot_manager.get_or_create_bot(user_id)
+        user_id = user_data.user.id
+        return await bot_manager.get_or_create_bot(user_id)
+        
+    except Exception as e:
+        print(f"Auth Error: {e}")
+        raise HTTPException(status_code=401, detail="Session expired")
 
 @app.get("/")
 async def read_index():

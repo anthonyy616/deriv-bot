@@ -1,20 +1,22 @@
-import logging
 import uvicorn
-from api.server import app
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("trade_bot.log"),
-        logging.StreamHandler()
-    ]
-)
+import os
+import sys
 
 if __name__ == "__main__":
+    # Ensure the root directory is in the python path
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    
+    print("🚀 Starting Bot Server...")
+    print("-----------------------------------")
+    print("ENTRY POINT: api/server.py")
+    print("ENGINE:      Polling Mode (Active)")
+    print("UI:          http://localhost:8000")
+    print("-----------------------------------")
+
+    # Run the API Server
+    # This automatically starts the 'TradingEngine' via the @app.on_event("startup") 
+    # defined in api/server.py
     try:
-        print("Starting Signal Server on port 8000...")
-        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+        uvicorn.run("api.server:app", host="0.0.0.0", port=8000, reload=True)
     except KeyboardInterrupt:
-        print("Server stopped by user.")
+        print("\n🛑 Shutting down...")
