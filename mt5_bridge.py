@@ -31,67 +31,6 @@ class TradeSignal(BaseModel):
     magic: int = 123456
     comment: str = "MT5 Bridge Trade"
 
-# --- Helper Functions ---
-
-def ensure_symbol(symbol):
-    """Attempts to select the symbol in Market Watch."""
-    # Ensure terminal is connected first
-    if not mt5.terminal_info():
-        return False
-        
-    selected = mt5.symbol_select(symbol, True)
-    if not selected:
-        print(f"   [MT5] Failed to select '{symbol}' (Error: {mt5.last_error()})")
-        return False
-    return True
-
-async def tick_stream_loop():
-    """Continuously polls MT5 for ticks and sends them to the Signal Server."""
-    print(f"🚀 Starting tick stream for {SYMBOL}...")
-    
-    # 1. Wait for Terminal Connection
-    while not mt5.terminal_info():
-        print("   [Stream] Waiting for terminal connection...")
-        await asyncio.sleep(2)
-
-    # 2. Robust Symbol Check (Retry Loop)
-    retry_count = 0
-    while not ensure_symbol(SYMBOL):
-        retry_count += 1
-        print(f"   [Stream] Retrying symbol selection ({retry_count}/5)...")
-        await asyncio.sleep(2)
-        if retry_count > 5:
-            print(f"❌ [Stream] ABORT: Could not find symbol '{SYMBOL}'. Check name/broker.")
-            return
-
-    symbol_info = mt5.symbol_info(SYMBOL)
-    point = symbol_info.point if symbol_info else 0.001
-    last_time = 0
-    
-    print(f"✅ [Stream] Live and streaming {SYMBOL}...")
-
-    # 3. Stream Loop
-    while True:
-        tick = mt5.symbol_info_tick(SYMBOL)
-        if tick and tick.time > last_time:
-            last_time = tick.time
-            try:
-                payload = {
-                    "symbol": SYMBOL,
-                    "bid": tick.bid,
-                    "ask": tick.ask,
-                    "time": int(tick.time),
-                    "point": point
-                }
-                # Fast timeout so bridge doesn't lag if main server is busy
-                requests.post(f"{SIGNAL_SERVER_URL}/tick", json=payload, timeout=0.1)
-            except Exception:
-                pass 
-        
-        await asyncio.sleep(0.01) # 10ms poll rate
-
-# --- Lifespan (The Critical Fix) ---
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- STARTUP ---
@@ -114,24 +53,16 @@ async def lifespan(app: FastAPI):
         else:
             print(f"❌ Login failed: {mt5.last_error()}")
 
-    # 3. Start Background Stream
-    task = asyncio.create_task(tick_stream_loop())
-    
     print("----------------------\n")
     
-    # 🚨 THIS YIELD IS REQUIRED. DO NOT REMOVE. 🚨
     yield 
     
     # --- SHUTDOWN ---
     print("\n--- Bridge Shutdown ---")
-    task.cancel()
     mt5.shutdown()
     print("-----------------------")
 
-# --- App Definition ---
 app = FastAPI(title="MT5 Bridge", lifespan=lifespan)
-
-# --- Endpoints ---
 
 @app.post("/execute_signal")
 async def execute_trade(signal: TradeSignal):

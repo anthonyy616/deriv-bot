@@ -1,82 +1,55 @@
 import asyncio
-import logging
-import signal
-from core.event_bus import EventBus
+import aiohttp
+import os
+from dotenv import load_dotenv
 
-class Engine:
-    def __init__(self):
-        self.event_bus = EventBus()
-        self.components = []
-        self.running = False
-        self._setup_signal_handlers()
+load_dotenv()
 
-    def _setup_signal_handlers(self):
-        """Handle graceful shutdown on Ctrl+C."""
-        # Note: In Windows, signal handling with asyncio can be tricky.
-        # This is a basic implementation.
-        pass
-
-    def register_component(self, component):
-        """Registers a component to be managed by the engine."""
-        self.components.append(component)
-        if hasattr(component, 'set_event_bus'):
-            component.set_event_bus(self.event_bus)
+class TradingEngine:
+    def __init__(self, bot_manager):
+        self.bot_manager = bot_manager
+        self.running = True
+        self.bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
 
     async def start(self):
-        """Starts the engine and all components."""
-        self.running = True
-        logging.info("Engine starting...")
+        print("⚙️ Engine: Bridge Poll Loop Active.")
+        await self.run_tick_loop()
 
-        # Start Event Bus
-        bus_task = asyncio.create_task(self.event_bus.run())
-
-        # Start Components
-        component_tasks = []
-        for component in self.components:
-            if hasattr(component, 'start'):
-                # If start is async, await it or create task?
-                # Usually components have a run loop or just initialization.
-                # We assume components have a 'run' method that is an async task
-                if hasattr(component, 'run') and asyncio.iscoroutinefunction(component.run):
-                    component_tasks.append(asyncio.create_task(component.run()))
-                elif asyncio.iscoroutinefunction(component.start):
-                    await component.start()
-                else:
-                    component.start()
-
-        logging.info("Engine running. Press Ctrl+C to stop.")
-
-        try:
-            # Keep main loop alive
+    async def run_tick_loop(self):
+        async with aiohttp.ClientSession() as session:
             while self.running:
-                await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            logging.info("Engine cancelled.")
-        finally:
-            await self.shutdown(bus_task, component_tasks)
+                try:
+                    # 1. Poll Bridge for latest market data
+                    async with session.get(f"{self.bridge_url}/account_info", timeout=1) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            price = data.get('current_price', 0)
+                            point = data.get('point', 0.001)
+                            if point == 0: point = 0.001
 
-    async def shutdown(self, bus_task, component_tasks):
-        """Graceful shutdown."""
-        logging.info("Shutting down...")
-        self.running = False
-        self.event_bus.stop()
-        
-        # Cancel all component tasks
-        for task in component_tasks:
-            task.cancel()
-        
-        if bus_task:
-            bus_task.cancel()
-            
-        # Stop components
-        for component in self.components:
-            if hasattr(component, 'stop'):
-                if asyncio.iscoroutinefunction(component.stop):
-                    await component.stop()
-                else:
-                    component.stop()
-        
-        logging.info("Shutdown complete.")
+                            if price > 0:
+                                # Construct tick data
+                                tick_data = {
+                                    'symbol': data.get('symbol', 'FX Vol 20'),
+                                    'ask': price, 
+                                    'bid': price, 
+                                    'point': point
+                                }
+                                
+                                # 2. Push tick to all ACTIVE bots
+                                active_bots = [b for b in self.bot_manager.bots.values() if b.running]
+                                
+                                if active_bots:
+                                    await asyncio.gather(
+                                        *[bot.on_external_tick(tick_data) for bot in active_bots]
+                                    )
+                                    
+                except Exception as e:
+                    # print(f"Engine Poll Error: {e}")
+                    pass 
+                
+                # 3. Poll Frequency (100ms)
+                await asyncio.sleep(0.1)
 
     def stop(self):
         self.running = False

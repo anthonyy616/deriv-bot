@@ -1,13 +1,15 @@
-from fastapi import FastAPI, HTTPException, Header, Depends, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 from core.bot_manager import BotManager
+from core.engine import TradingEngine 
 from supabase import create_client, Client
 import asyncio
 import os
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -22,7 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. Initialize Supabase Admin Client (For token verification)
+# 1. Initialize Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -30,8 +32,15 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Global Bot Manager
+# 2. Initialize Core Systems
 bot_manager = BotManager()
+trading_engine = TradingEngine(bot_manager)
+
+# 3. Start the Engine Loop on Server Startup
+@app.on_event("startup")
+async def startup_event():
+    print("🚀 Server Starting: Launching Trading Engine Loop...")
+    asyncio.create_task(trading_engine.start())
 
 class ConfigUpdate(BaseModel):
     symbol: str | None = None
@@ -46,28 +55,47 @@ class ConfigUpdate(BaseModel):
     max_drawdown_usd: float | None = None
 
 # --- Dependency: Verify Supabase Token & Get Bot ---
+# Simple in-memory cache: {token: (user_id, timestamp)}
+TOKEN_CACHE = {}
+CACHE_DURATION = 300  # 5 minutes
+
 async def get_current_bot(request: Request):
-    # 1. Check for Authorization Header
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     
     token = auth_header.split(" ")[1]
     
-    try:
-        # 2. Verify Token with Supabase
-        user_data = supabase.auth.get_user(token)
-        if not user_data or not user_data.user:
-             raise HTTPException(status_code=401, detail="Invalid Supabase Token")
+    user_id = None
+    now = time.time()
+    
+    # 1. Check Cache
+    if token in TOKEN_CACHE:
+        cached_uid, cached_time = TOKEN_CACHE[token]
+        if now - cached_time < CACHE_DURATION:
+            user_id = cached_uid
+    
+    # 2. Verify with Supabase (if not cached)
+    if not user_id:
+        try:
+            # Run blocking Supabase call in a separate thread
+            def verify_token():
+                return supabase.auth.get_user(token)
+            
+            user_data = await asyncio.to_thread(verify_token)
+            
+            if not user_data or not user_data.user:
+                 raise HTTPException(status_code=401, detail="Invalid Supabase Token")
+            
+            user_id = user_data.user.id
+            # Update Cache
+            TOKEN_CACHE[token] = (user_id, now)
+            
+        except Exception as e:
+            print(f"Auth Error: {e}")
+            raise HTTPException(status_code=401, detail="Session expired")
 
-        user_id = user_data.user.id
-        
-        # 3. Get or Restore Bot for this User
-        return await bot_manager.get_or_create_bot(user_id)
-        
-    except Exception as e:
-        print(f"Auth Error: {e}")
-        raise HTTPException(status_code=401, detail="Session expired")
+    return await bot_manager.get_or_create_bot(user_id)
 
 @app.get("/")
 async def read_index():
@@ -75,10 +103,7 @@ async def read_index():
 
 @app.get("/env")
 async def get_env():
-    return {
-        "SUPABASE_URL": SUPABASE_URL,
-        "SUPABASE_KEY": SUPABASE_KEY
-    }
+    return { "SUPABASE_URL": SUPABASE_URL, "SUPABASE_KEY": SUPABASE_KEY }
 
 @app.get("/config")
 async def get_config(bot = Depends(get_current_bot)):
@@ -92,7 +117,7 @@ async def update_config(config: ConfigUpdate, bot = Depends(get_current_bot)):
     updated = bot.config_manager.update_config(new_config)
     
     if config.symbol and config.symbol != old_symbol:
-        print(f"Symbol changed from {old_symbol} to {config.symbol}. Restarting ticker...")
+        print(f"Symbol changed from {old_symbol} to {config.symbol}. Resetting logic...")
         await bot.start_ticker()
         
     return updated
@@ -101,7 +126,7 @@ async def update_config(config: ConfigUpdate, bot = Depends(get_current_bot)):
 async def start_bot(bot = Depends(get_current_bot)):
     if bot.running:
         return {"message": "Bot is already running"}
-    asyncio.create_task(bot.start())
+    await bot.start()
     return {"message": "Bot started"}
 
 @app.post("/control/stop")
