@@ -127,13 +127,17 @@ class GridStrategy:
     async def send_trade(self, action, volume, tp_usd, sl_usd, point):
         if not self.session: return False
         
-        # Precise Point Calculation
+        # Safety checks
         if volume <= 0: volume = 0.01
         if point <= 0: point = 0.001
 
         try:
-            tp_points = int((tp_usd / volume) / point) if tp_usd > 0 else 0
-            sl_points = int((sl_usd / volume) / point) if sl_usd > 0 else 0
+            # --- THE FIX ---
+            # Old Logic: int((abs(tp_usd) / volume) / point)  <-- This adjusted for lot size (Money)
+            # New Logic: int(abs(tp_usd) / point)             <-- This is pure distance
+            
+            tp_points = int(abs(tp_usd) / point) if tp_usd > 0 else 0
+            sl_points = int(abs(sl_usd) / point) if sl_usd > 0 else 0
         except:
             tp_points = 100
             sl_points = 100
