@@ -424,14 +424,32 @@
 
         // --- API Helper ---
         async function apiCall(endpoint, method = 'GET', body = null) {
-            if (!sessionToken) return;
-            const headers = { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' };
+            // CRITICAL FIX: Fetch current session directly from Supabase
+            // This grabs the refreshed token if the old one expired
+            const { data } = await supabase.auth.getSession();
+            const token = data.session?.access_token;
+
+            if (!token) {
+                // Only logout if there is genuinely no session
+                console.warn("No active session found.");
+                return null;
+            }
+
+            const headers = {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            };
+
             const opts = { method, headers };
             if (body) opts.body = JSON.stringify(body);
 
             try {
                 const res = await fetch(endpoint, opts);
-                if (res.status === 401) { logout(); return null; }
+                if (res.status === 401) {
+                    // Optional: Retry once here if you suspect race conditions
+                    logout();
+                    return null;
+                }
                 return res.json();
             } catch (e) {
                 console.error("API Error:", e);
@@ -449,7 +467,13 @@
                     document.getElementById('login-error').classList.remove('hidden');
                     return;
                 }
-                supabase = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY);
+                supabase = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY, {
+                    auth: {
+                        persistSession: true,
+                        autoRefreshToken: true,
+                        detectSessionInUrl: true
+                    }
+                });
                 const { data } = await supabase.auth.getSession();
                 if (data.session) setLoggedInState(data.session);
                 supabase.auth.onAuthStateChange((event, session) => {

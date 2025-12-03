@@ -24,11 +24,9 @@ class GridStrategy:
     def config(self):
         return self.config_manager.get_config()
 
-    # --- CRITICAL FIX: Interface for server.py ---
     async def start_ticker(self):
         """Called by server.py when config changes to restart logic"""
         self.reset_cycle()
-    # ---------------------------------------------
 
     async def start(self):
         self.running = True
@@ -66,12 +64,12 @@ class GridStrategy:
         if not self.running: return
 
         ask = tick_data['ask']
-        point = tick_data.get('point', 0.001)
+        # point = tick_data.get('point', 0.001) # IGNORE POINT for user inputs
 
         # 1. Initialize Levels (First Tick Only)
         if self.level_center is None:
-            spread_points = self.config.get('spread', 2) 
-            spread_val = spread_points * point 
+            # FIX: Use raw value from config (e.g., 6.0) directly, do not multiply by point
+            spread_val = float(self.config.get('spread', 6.0))
             
             self.level_center = ask
             self.level_top = self.level_center + spread_val
@@ -87,7 +85,7 @@ class GridStrategy:
 
     async def run_watchdog(self):
         """ Monitors for Deals (Entry/TP/SL) and updates Pending Orders """
-        print("👀 Watchdog Active")
+        # print("👀 Watchdog Active") # Reduce log spam
         while self.running:
             try:
                 await self.check_deals()
@@ -142,20 +140,29 @@ class GridStrategy:
                 await self.send_pending("buy_stop", target_price, next_vol)
 
     async def send_pending(self, action, price, volume):
-        """ Helper to send Stop Orders """
+        """ Helper to send Stop Orders with Configured SL/TP """
+        
+        # FIX: Retrieve TP/SL from config based on direction
+        if "buy" in action.lower():
+            sl_dist = float(self.config.get('buy_stop_sl', 0))
+            tp_dist = float(self.config.get('buy_stop_tp', 0))
+        else:
+            sl_dist = float(self.config.get('sell_stop_sl', 0))
+            tp_dist = float(self.config.get('sell_stop_tp', 0))
+
         payload = {
             "action": action,
             "symbol": self.symbol,
             "volume": float(volume),
             "price": float(price),
-            "sl_points": 0,
-            "tp_points": 0,
+            "sl_points": sl_dist, # Sending raw distance (e.g. 24.0)
+            "tp_points": tp_dist, # Sending raw distance (e.g. 16.0)
             "comment": f"Step {self.current_step}"
         }
         try:
             await self.session.post(f"{self.mt5_bridge_url}/execute_signal", json=payload)
-        except:
-            pass
+        except Exception as e:
+            print(f"❌ Failed to send order: {e}")
 
     def get_volume(self, step):
         step_lots = self.config.get('step_lots', [])
