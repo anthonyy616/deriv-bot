@@ -143,19 +143,16 @@ def get_account_info():
 
 @app.post("/close_all")
 def close_all_positions():
-    """
-    Closes ALL active positions AND cancels ALL pending orders.
-    Returns: { "closed_positions": int, "removed_orders": int }
-    """
-    if not mt5.terminal_info(): raise HTTPException(500, "Disconnected")
+    if not mt5.terminal_info(): 
+        raise HTTPException(500, "Disconnected")
+    
+    status_log = []
     
     # 1. Close Active Positions
     positions = mt5.positions_get(symbol=SYMBOL)
-    closed_count = 0
     if positions:
         for pos in positions:
             tick = mt5.symbol_info_tick(pos.symbol)
-            # Determine closing price (Sell for Buy, Buy for Sell)
             price = tick.bid if pos.type == mt5.ORDER_TYPE_BUY else tick.ask
             type_op = mt5.ORDER_TYPE_SELL if pos.type == mt5.ORDER_TYPE_BUY else mt5.ORDER_TYPE_BUY
             
@@ -166,15 +163,15 @@ def close_all_positions():
                 "type": type_op,
                 "position": pos.ticket,
                 "price": price,
+                "deviation": 50, # INCREASED SLIPPAGE TOLERANCE
                 "magic": pos.magic,
-                "comment": "Close All (Strategy Reset)",
+                "comment": "Strategy Reset",
             }
             res = mt5.order_send(request)
-            if res and res.retcode == mt5.TRADE_RETCODE_DONE: closed_count += 1
+            status_log.append(f"Position {pos.ticket}: {res.comment if res else 'Failed'}")
 
-    # 2. Cancel Pending Orders (Limit/Stop)
+    # 2. Cancel Pending Orders
     orders = mt5.orders_get(symbol=SYMBOL)
-    removed_count = 0
     if orders:
         for order in orders:
             request = {
@@ -183,9 +180,10 @@ def close_all_positions():
                 "symbol": SYMBOL,
             }
             res = mt5.order_send(request)
-            if res and res.retcode == mt5.TRADE_RETCODE_DONE: removed_count += 1
+            status_log.append(f"Order {order.ticket}: {res.comment if res else 'Failed'}")
             
-    return {"closed_positions": closed_count, "removed_orders": removed_count}
+    print(f"☢️ CLOSE ALL EXECUTED: {status_log}")
+    return {"log": status_log}
 
 @app.get("/recent_deals")
 def get_recent_deals(seconds: int = 60):
