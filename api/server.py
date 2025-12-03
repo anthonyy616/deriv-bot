@@ -71,6 +71,12 @@ async def get_current_bot(request: Request):
         return await bot_manager.get_or_create_bot(user_id)
         
     except Exception as e:
+        # TRAP THE ZOMBIE TOKEN ERROR
+        err_str = str(e)
+        if "session_id claim in JWT" in err_str or "403" in err_str:
+            # Silence the spam, just reject the request
+            raise HTTPException(status_code=401, detail="Session Dead")
+            
         print(f"Auth Error: {e}")
         raise HTTPException(status_code=401, detail="Session expired")
 
