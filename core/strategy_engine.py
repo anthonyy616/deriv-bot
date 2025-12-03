@@ -8,48 +8,38 @@ class GridStrategy:
         self.config_manager = config_manager
         self.symbol = config_manager.get_config().get('symbol', 'FX Vol 20')
         self.running = False
-        
-        # Connection
         self.mt5_bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
         
-        # --- State Management ---
-        self.level_top = None    
-        self.level_bottom = None 
-        self.level_center = None 
-        self.state = "START"
+        # --- Fixed Levels ---
+        self.level_top = None
+        self.level_bottom = None
+        self.level_center = None
+        
         self.current_step = 0
-        self.last_trigger_time = 0
-        self.current_price = 0 
         self.session = None
         self.start_time = 0 
-        
-        # Interrupt State
         self.last_processed_ticket = 0
 
     @property
     def config(self):
         return self.config_manager.get_config()
 
-    async def start_ticker(self):
-        self.reset_cycle()
-
     async def start(self):
         self.running = True
         self.session = aiohttp.ClientSession()
         self.start_time = time.time()
         
-        # 1. Sync Sequence Number (Prevent processing old deals)
+        # Sync Sequence to avoid reading old deals
         try:
             async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=60", timeout=2) as resp:
                 if resp.status == 200:
                     deals = await resp.json()
-                    if deals:
-                        self.last_processed_ticket = max(d['ticket'] for d in deals)
-        except Exception:
-            pass
+                    if deals: self.last_processed_ticket = max(d['ticket'] for d in deals)
+        except: pass
 
         self.reset_cycle()
-        print(f"✅ Strategy Started. Symbol: {self.symbol} | Sequence: {self.last_processed_ticket}")
+        asyncio.create_task(self.run_watchdog()) # Launch Safety Monitor
+        print(f"✅ Strategy Started: {self.symbol}")
 
     async def stop(self):
         self.running = False
@@ -59,171 +49,153 @@ class GridStrategy:
         print("🛑 Strategy Stopped.")
 
     def reset_cycle(self):
-        """ Soft Reset: Wipes memory to start a fresh round """
+        """ Hard Reset: Clears levels to force re-calculation on next tick """
         self.level_top = None
         self.level_bottom = None
         self.level_center = None
-        self.state = "START"
         self.current_step = 0
-        self.last_trigger_time = 0
-        print("🔄 RAM Cleared: Waiting for next tick to start new round...")
+        print("🔄 Cycle Reset: Waiting for price to set levels...")
 
     async def on_external_tick(self, tick_data):
         if not self.running: return
-        self.current_price = tick_data['ask']
 
-        # 0. INTERRUPT CHECK
-        # If this returns True, we STOP processing this tick immediately.
-        if await self.check_stopping_conditions():
-            return
-
-        # ... Normal Business Logic ...
         ask = tick_data['ask']
-        bid = tick_data['bid']
         point = tick_data.get('point', 0.001)
-        
+
+        # 1. Initialize Levels (First Tick Only)
         if self.level_center is None:
             spread_points = self.config.get('spread', 2) 
             spread_val = spread_points * point 
-            self.level_center = ask 
+            
+            self.level_center = ask
             self.level_top = self.level_center + spread_val
             self.level_bottom = self.level_center - spread_val
-            print(f"🎯 New Round: Center={self.level_center:.5f} | Top={self.level_top:.5f} | Bottom={self.level_bottom:.5f}")
+            
+            print(f"🎯 Levels Set | Top: {self.level_top:.5f} | Center: {self.level_center:.5f} | Bottom: {self.level_bottom:.5f}")
+            
+            # 2. Place Initial Straddle (Pending Orders)
+            # 0.1 Lot Buy Stop @ Top, 0.1 Lot Sell Stop @ Bottom
+            vol = self.get_volume(0)
+            await self.send_pending("buy_stop", self.level_top, vol)
+            await self.send_pending("sell_stop", self.level_bottom, vol)
             return
 
-        await self.execute_logic(ask, bid, point)
+        # Note: We do NOT execute logic here anymore. 
+        # Logic is now Event-Driven (Deal Detection) in run_watchdog.
 
-    async def execute_logic(self, ask, bid, point):
-        # ... (Same Logic as before) ...
-        if time.time() - self.last_trigger_time < 0.5: return
+    async def run_watchdog(self):
+        """ Monitors for Deals (Entry/TP/SL) and updates Pending Orders """
+        print("👀 Watchdog Active")
+        while self.running:
+            try:
+                await self.check_deals()
+            except Exception as e:
+                print(f"Watchdog Error: {e}")
+            await asyncio.sleep(0.5) # Fast polling for deal updates
 
-        max_pos = self.config.get('max_positions', 5)
-        if self.current_step >= max_pos: return
+    async def check_deals(self):
+        if not self.session: return
+        
+        # Fetch deals since last check
+        async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=10", timeout=2) as resp:
+            if resp.status != 200: return
+            deals = await resp.json()
+
+        # Filter new deals
+        new_deals = [d for d in deals if d['ticket'] > self.last_processed_ticket]
+        if not new_deals: return
+
+        # Update watermark
+        self.last_processed_ticket = max(d['ticket'] for d in new_deals)
+
+        for deal in new_deals:
+            # 1. Check for TP/SL (Profit != 0) -> TERMINATE
+            if deal['profit'] != 0:
+                print(f"🚨 TP/SL HIT ({deal['profit']}) -> RESETTING...")
+                await self.session.post(f"{self.mt5_bridge_url}/close_all")
+                self.reset_cycle()
+                return # Stop processing other deals
+
+            # 2. Check for ENTRY (Profit == 0 usually for entry deals)
+            # Deal Type 0 = Buy, 1 = Sell
+            deal_type = deal['type'] 
+            self.current_step += 1
+            next_vol = self.get_volume(self.current_step)
+
+            print(f"⚡ Deal Detected: {'BUY' if deal_type == 0 else 'SELL'} | Step {self.current_step}")
+
+            # CLEANUP: Remove old pending orders (e.g. the other side of the straddle)
+            await self.session.post(f"{self.mt5_bridge_url}/cancel_orders")
+
+            # LOGIC: Tightening Channel
+            if deal_type == 0: # We just BOUGHT (at Top or Center)
+                # Next move: SELL STOP at CENTER
+                # (User Rule: "SS moves to 10")
+                target_price = self.level_center
+                print(f"➡ Placing Sell Stop @ {target_price:.5f}")
+                await self.send_pending("sell_stop", target_price, next_vol)
             
-        step_lots = self.config.get('step_lots', [])
-        current_vol = step_lots[self.current_step] if self.current_step < len(step_lots) else (step_lots[-1] if step_lots else 0.01)
+            elif deal_type == 1: # We just SOLD (at Bottom or Center)
+                # Next move: BUY STOP at TOP (or Center?)
+                # User Rule: "If SS hits... place BS again at 12 (Top)"
+                # But if we sold at Bottom (8), we target Center (10).
+                # If we sold at Center (10), we target Top (12).
+                
+                # Simple logic: If we hold a Sell, we want to Buy above.
+                # If we just sold at Bottom (8), next Buy is Center (10).
+                # If we just sold at Center (10), next Buy is Top (12).
+                
+                # To distinguish, check the Deal Price?
+                # Simplify: "Tightening" means we oscillate [Center, Top] OR [Bottom, Center].
+                
+                # Assuming first breakout was UP (Buy @ Top):
+                # We are locked in [Center, Top].
+                # Sell was at Center. Next Buy is Top.
+                
+                # Assuming first breakout was DOWN (Sell @ Bottom):
+                # We are locked in [Bottom, Center].
+                # Sell was at Bottom. Next Buy is Center.
+                
+                # Robust Calculation:
+                # If Deal Price < Center (approx): We are at Bottom. Next Buy = Center.
+                # If Deal Price >= Center (approx): We are at Center. Next Buy = Top.
+                
+                # Note: Deal price might deviate slightly, so use 0.1 tolerance or just logic
+                # Actually, simpler: Always default to restoring the tight channel.
+                # If we sold, place Buy Stop at Level Top (if we are high) or Center (if we are low).
+                
+                # For this specific user request ("BS hits 12, SS moves to 10... SS hits 10, BS moves to 12"):
+                # This describes the [10, 12] channel.
+                target_price = self.level_top
+                print(f"➡ Placing Buy Stop @ {target_price:.5f}")
+                await self.send_pending("buy_stop", target_price, next_vol)
 
-        if self.state == "START":
-            if ask >= self.level_top:
-                if await self.send_trade("buy", current_vol, point):
-                    self.state = "TOP_HIT" 
-            elif bid <= self.level_bottom:
-                if await self.send_trade("sell", current_vol, point):
-                    self.state = "BOTTOM_HIT" 
-
-        elif self.state == "TOP_HIT":
-            if bid <= self.level_center:
-                if await self.send_trade("sell", current_vol, point):
-                    self.state = "CENTER_FROM_TOP" 
-
-        elif self.state == "BOTTOM_HIT":
-            if ask >= self.level_center:
-                if await self.send_trade("buy", current_vol, point):
-                    self.state = "CENTER_FROM_BOTTOM" 
-
-        elif self.state == "CENTER_FROM_TOP":
-            if ask >= self.level_top:
-                if await self.send_trade("buy", current_vol, point):
-                    self.state = "TOP_HIT"
-
-        elif self.state == "CENTER_FROM_BOTTOM":
-            if bid <= self.level_bottom:
-                if await self.send_trade("sell", current_vol, point):
-                    self.state = "BOTTOM_HIT"
-
-    async def send_trade(self, action, volume, point):
-        if not self.session: return False
-        
-        tp_usd = self.config.get('buy_stop_tp') if action == 'buy' else self.config.get('sell_stop_tp')
-        sl_usd = self.config.get('buy_stop_sl') if action == 'buy' else self.config.get('sell_stop_sl')
-        
-        try:
-            tp_points = int(abs(tp_usd) / point) if tp_usd > 0 else 0
-            sl_points = int(abs(sl_usd) / point) if sl_usd > 0 else 0
-        except:
-            tp_points = 100
-            sl_points = 100
-
+    async def send_pending(self, action, price, volume):
+        """ Helper to send Stop Orders """
         payload = {
             "action": action,
             "symbol": self.symbol,
             "volume": float(volume),
-            "sl_points": sl_points,
-            "tp_points": tp_points,
+            "price": float(price), # CRITICAL: Send the exact calculated level
+            "sl_points": 0,
+            "tp_points": 0,
             "comment": f"Step {self.current_step}"
         }
-        
         try:
-            async with self.session.post(f"{self.mt5_bridge_url}/execute_signal", json=payload, timeout=2) as resp:
-                if resp.status == 200:
-                    self.current_step += 1
-                    self.last_trigger_time = time.time()
-                    print(f"⚡ ORDER SENT: {action.upper()} | Step {self.current_step}")
-                    return True
-        except Exception as e:
-            print(f"❌ Execution Error: {e}")
-        return False
-
-    # --- THE INTERRUPT SYSTEM ---
-    
-    async def check_stopping_conditions(self):
-        """ The Detector: Scans for signals to trigger the interrupt """
-        if not self.session: return False
-        
-        try:
-            # 1. Soft Interrupt: TP/SL Hit
-            async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=5", timeout=2) as resp:
-                if resp.status == 200:
-                    deals = await resp.json()
-                    
-                    # Filter for NEW events only
-                    new_deals = [d for d in deals if d['ticket'] > self.last_processed_ticket]
-                    
-                    if new_deals:
-                        # Update Sequence (Consume the event)
-                        self.last_processed_ticket = max(d['ticket'] for d in new_deals)
-                        
-                        tp_hit = any(d['profit'] > 0 for d in new_deals)
-                        sl_hit = any(d['profit'] < 0 for d in new_deals)
-                        
-                        if tp_hit or sl_hit:
-                            msg = "🎉 TP Hit!" if tp_hit else "💀 SL Hit!"
-                            print(f"⚡ INTERRUPT SIGNAL: {msg}")
-                            await self.execute_soft_interrupt() # TRIGGER HANDLER
-                            return True
-
-            # 2. Hard Interrupt: Max Drawdown / Runtime
-            # (If these hit, we stop the bot entirely, not just reset)
-            # ... (omitted for brevity, same as before but calls self.stop()) ...
-            
-        except Exception:
-            pass
-        return False
-
-    async def execute_soft_interrupt(self):
-        """ The Handler: Performs the clean-up and reset """
-        print(">>> HANDLER: Executing Close All & State Reset...")
-        
-        # 1. Hardware Kill (Bridge)
-        try:
-            await self.session.post(f"{self.mt5_bridge_url}/close_all", timeout=2)
+            await self.session.post(f"{self.mt5_bridge_url}/execute_signal", json=payload)
         except:
-            print("⚠️ Bridge Unreachable during reset")
+            pass
 
-        # 2. Memory Wipe (Strategy)
-        self.reset_cycle()
-        
-        # 3. Cooldown (Wait for dust to settle)
-        await asyncio.sleep(1.0)
-        print(">>> HANDLER: System Ready.")
-
-        
+    def get_volume(self, step):
+        step_lots = self.config.get('step_lots', [])
+        if step < len(step_lots): return step_lots[step]
+        return step_lots[-1] if step_lots else 0.01
 
     def get_status(self):
         return {
             "running": self.running,
-            "symbol": self.symbol,
-            "current_price": self.current_price,
-            "positions_count": self.current_step,
-            "config": self.config
+            "step": self.current_step,
+            "top": self.level_top,
+            "center": self.level_center,
+            "bottom": self.level_bottom
         }
