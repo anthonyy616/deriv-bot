@@ -301,10 +301,6 @@
                 <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Pending</div>
                 <div class="text-2xl font-bold mt-1"><span id="pending-count">0</span></div>
             </div>
-            <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
-                <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Drawdown</div>
-                <div id="drawdown-display" class="text-2xl font-bold mt-1 text-red-500">$0.00</div>
-            </div>
         </div>
 
         <div class="grid md:grid-cols-3 gap-6">
@@ -332,15 +328,17 @@
                         <label class="block text-xs font-bold text-blue-500 mb-2">Buy Stop Settings</label>
                         <div class="grid grid-cols-2 gap-2">
                             <div>
-                                <label class="block text-[10px] text-gray-500 mb-0.5">TP ($)</label>
+                                <label class="block text-[10px] text-gray-500 mb-0.5">TP (pips)</label>
                                 <input type="number" id="buy_stop_tp"
                                     class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
                             </div>
                             <div>
-                                <label class="block text-[10px] text-gray-500 mb-0.5">SL ($)</label>
+                                <label class="block text-[10px] text-gray-500 mb-0.5">SL (pips)</label>
                                 <input type="number" id="buy_stop_sl"
                                     class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
                             </div>
+                            <span class="text-[10px] text-gray-500 mb-0.5">Please note:
+                                Value here has to be above "10" for broker to accept your order</span>
                         </div>
                     </div>
 
@@ -348,15 +346,17 @@
                         <label class="block text-xs font-bold text-red-500 mb-2">Sell Stop Settings</label>
                         <div class="grid grid-cols-2 gap-2">
                             <div>
-                                <label class="block text-[10px] text-gray-500 mb-0.5">TP ($)</label>
+                                <label class="block text-[10px] text-gray-500 mb-0.5">TP (pips)</label>
                                 <input type="number" id="sell_stop_tp"
                                     class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
                             </div>
                             <div>
-                                <label class="block text-[10px] text-gray-500 mb-0.5">SL ($)</label>
+                                <label class="block text-[10px] text-gray-500 mb-0.5">SL (pips)</label>
                                 <input type="number" id="sell_stop_sl"
                                     class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
                             </div>
+                            <span class="text-[10px] text-gray-500 mb-0.5">Please note:
+                                Value here has to be above "10" for broker to accept your order</span>
                         </div>
                     </div>
 
@@ -373,11 +373,6 @@
                             <label class="block text-xs font-bold text-gray-500 mb-1">Max Time (Min)</label>
                             <input type="number" id="max_runtime_minutes"
                                 class="w-full p-2 text-sm rounded bg-slate-900 border border-slate-600">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-gray-500 mb-1">Max Drawdown ($)</label>
-                            <input type="number" id="max_drawdown_usd"
-                                class="w-full p-2 text-sm rounded bg-slate-900 border border-red-900/50">
                         </div>
                     </div>
 
@@ -528,7 +523,7 @@
             if (cfg.symbol) document.getElementById('symbol').value = cfg.symbol;
             if (cfg.spread) document.getElementById('spread').value = cfg.spread;
 
-            ['buy_stop_tp', 'buy_stop_sl', 'sell_stop_tp', 'sell_stop_sl', 'max_runtime_minutes', 'max_drawdown_usd'].forEach(k => {
+            ['buy_stop_tp', 'buy_stop_sl', 'sell_stop_tp', 'sell_stop_sl', 'max_runtime_minutes'].forEach(k => {
                 if (cfg[k] !== undefined) document.getElementById(k).value = cfg[k];
             });
 
@@ -558,7 +553,6 @@
                 sell_stop_sl: parseFloat(document.getElementById('sell_stop_sl').value),
                 max_positions: parseInt(document.getElementById('max_positions').value),
                 max_runtime_minutes: parseInt(document.getElementById('max_runtime_minutes').value),
-                max_drawdown_usd: parseFloat(document.getElementById('max_drawdown_usd').value),
                 step_lots: step_lots
             };
 
@@ -590,7 +584,6 @@
             document.getElementById('price-display').textContent = status.current_price ? status.current_price.toFixed(2) : '---';
             document.getElementById('pos-count').textContent = status.open_positions || 0;
             document.getElementById('pending-count').textContent = status.pending_orders || 0;
-            document.getElementById('drawdown-display').textContent = `$${(status.current_drawdown || 0).toFixed(2)}`;
 
             const statusBadge = document.getElementById('status-badge');
             const toggleBtn = document.getElementById('toggle-btn');
