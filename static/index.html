@@ -76,6 +76,7 @@
         .input:focus {
             outline: none;
             border-color: #3b82f6;
+            width: 100%;
         }
 
         .text-muted {
@@ -240,8 +241,6 @@
     </style>
 </head>
 
-</head>
-
 <body
     class="p-4 md:p-8 font-sans bg-gray-50 text-slate-900 dark:bg-slate-950 dark:text-slate-50 transition-colors duration-300">
 
@@ -402,7 +401,7 @@
         let supabase = null;
         let updateInterval = null;
         let sessionToken = null;
-        let lastRunningState = false; // For detecting stop/start events
+        let lastRunningState = false;
 
         // --- UI Helpers ---
         function setLoggedInState(session) {
@@ -421,6 +420,23 @@
             document.getElementById('login-modal').classList.remove('hidden');
             document.getElementById('dashboard').classList.add('hidden');
             if (updateInterval) clearInterval(updateInterval);
+        }
+
+        // --- API Helper ---
+        async function apiCall(endpoint, method = 'GET', body = null) {
+            if (!sessionToken) return;
+            const headers = { 'Authorization': `Bearer ${sessionToken}`, 'Content-Type': 'application/json' };
+            const opts = { method, headers };
+            if (body) opts.body = JSON.stringify(body);
+
+            try {
+                const res = await fetch(endpoint, opts);
+                if (res.status === 401) { logout(); return null; }
+                return res.json();
+            } catch (e) {
+                console.error("API Error:", e);
+                return null;
+            }
         }
 
         // --- 1. Initialize Supabase ---
@@ -455,117 +471,87 @@
             btn.innerHTML = '<div class="loader"></div>';
 
             try {
+                // Try Login
                 const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email, password });
                 if (loginData.session) { setLoggedInState(loginData.session); return; }
 
+                // If Login fails, Try Registration
                 console.log("Login failed, attempting registration...");
-                const { data: signupData, error: signupError } = await supabase.auth.signUp({ email, password });
-                if (signupError) throw new Error(loginError ? loginError.message : signupError.message);
+                const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
 
-                if (signupData.session) { setLoggedInState(signupData.session); return; }
+                if (signUpData.session) {
+                    setLoggedInState(signUpData.session);
+                    return;
+                }
 
-                const { data: retryData, error: retryError } = await supabase.auth.signInWithPassword({ email, password });
-                if (retryData.session) { setLoggedInState(retryData.session); return; }
-                throw new Error("Account created but auto-login failed. Please try again.");
-            } catch (err) {
-                errBox.textContent = err.message || "Authentication failed";
-                errBox.classList.remove('text-green-500'); errBox.classList.add('text-red-500'); errBox.classList.remove('hidden');
+                if (signUpError) throw signUpError;
+                if (loginError) throw loginError;
+
+            } catch (e) {
+                console.error("Auth Error", e);
+                errBox.textContent = e.message || "Authentication failed. Please try again.";
+                errBox.classList.remove('hidden');
+            } finally {
                 btn.innerHTML = 'Sign In / Register';
             }
         }
 
-        // --- 3. API & Data ---
-        async function apiCall(endpoint, method = 'GET', body = null) {
-            if (!sessionToken) return;
-            try {
-                const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionToken}` };
-                const opts = { method, headers };
-                if (body) opts.body = JSON.stringify(body);
-                const res = await fetch(endpoint, opts);
-                if (res.status === 401) { await supabase.auth.signOut(); return null; }
-                return await res.json();
-            } catch (e) { log("❌ Network Error"); }
+        // --- 3. Config Management ---
+        async function loadConfig() {
+            const cfg = await apiCall('/config');
+            if (!cfg) return;
+
+            if (cfg.symbol) document.getElementById('symbol').value = cfg.symbol;
+            if (cfg.spread) document.getElementById('spread').value = cfg.spread;
+
+            ['buy_stop_tp', 'buy_stop_sl', 'sell_stop_tp', 'sell_stop_sl', 'max_runtime_minutes', 'max_drawdown_usd'].forEach(k => {
+                if (cfg[k] !== undefined) document.getElementById(k).value = cfg[k];
+            });
+
+            if (cfg.max_positions) {
+                document.getElementById('max_positions').value = cfg.max_positions;
+                document.getElementById('max-pos-disp').textContent = cfg.max_positions;
+            }
+
+            renderLotInputs(cfg.step_lots || []);
         }
 
         async function updateConfig(e) {
             e.preventDefault();
-            const maxPos = parseInt(document.getElementById('max_positions').value) || 5;
-            const stepLots = [];
-            for (let i = 0; i < maxPos; i++) {
-                const el = document.getElementById(`lot_${i}`);
-                stepLots.push(el ? parseFloat(el.value) || 0.01 : 0.01);
+            const step_lots = [];
+            const count = parseInt(document.getElementById('max_positions').value) || 0;
+            for (let i = 0; i < count; i++) {
+                const val = parseFloat(document.getElementById(`lot_${i}`).value);
+                step_lots.push(isNaN(val) ? 0.01 : val);
             }
+
             const payload = {
                 symbol: document.getElementById('symbol').value,
-                spread: parseFloat(document.getElementById('spread').value) || 8,
-                max_positions: maxPos,
-                step_lots: stepLots,
-                buy_stop_tp: parseFloat(document.getElementById('buy_stop_tp').value) || 0,
-                buy_stop_sl: parseFloat(document.getElementById('buy_stop_sl').value) || 0,
-                sell_stop_tp: parseFloat(document.getElementById('sell_stop_tp').value) || 0,
-                sell_stop_sl: parseFloat(document.getElementById('sell_stop_sl').value) || 0,
-                max_runtime_minutes: parseInt(document.getElementById('max_runtime_minutes').value) || 0,
-                max_drawdown_usd: parseFloat(document.getElementById('max_drawdown_usd').value) || 0
+                spread: parseFloat(document.getElementById('spread').value),
+                buy_stop_tp: parseFloat(document.getElementById('buy_stop_tp').value),
+                buy_stop_sl: parseFloat(document.getElementById('buy_stop_sl').value),
+                sell_stop_tp: parseFloat(document.getElementById('sell_stop_tp').value),
+                sell_stop_sl: parseFloat(document.getElementById('sell_stop_sl').value),
+                max_positions: parseInt(document.getElementById('max_positions').value),
+                max_runtime_minutes: parseInt(document.getElementById('max_runtime_minutes').value),
+                max_drawdown_usd: parseFloat(document.getElementById('max_drawdown_usd').value),
+                step_lots: step_lots
             };
-            const res = await apiCall('/config', 'POST', payload);
-            if (res) log("✅ Settings Updated.");
-        }
 
-        async function fetchStatus() {
-            const data = await apiCall('/status');
-            if (!data) return;
-
-            // 1. Update Live Price & Stats (Always)
-            if (data.current_price) document.getElementById('price-display').textContent = data.current_price.toFixed(5);
-            document.getElementById('pos-count').textContent = data.positions_count || 0;
-            document.getElementById('pending-count').textContent = data.pending_orders_count || 0;
-
-            // 2. Logic to log start/stop events ONLY
-            const badge = document.getElementById('status-badge');
-
-            if (data.running) {
-                // Was Stopped, Now Running
-                if (!lastRunningState) {
-                    log("🚀 Bot Started.");
-                }
-                lastRunningState = true;
-
-                badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-green-500 animate-pulse"></div> Running';
-                document.getElementById('toggle-btn').textContent = "Stop Bot";
-                document.getElementById('toggle-btn').className = "px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded";
+            const updated = await apiCall('/config', 'POST', payload);
+            if (updated) {
+                log("⚙️ Settings Updated");
+                loadConfig();
             } else {
-                // Was Running, Now Stopped
-                if (lastRunningState) {
-                    log("🛑 Bot Stopped (User or Condition Met).");
-                }
-                lastRunningState = false;
-
-                badge.innerHTML = '<div class="h-2 w-2 rounded-full bg-slate-400"></div> Stopped';
-                document.getElementById('toggle-btn').textContent = "Start Bot";
-                document.getElementById('toggle-btn').className = "px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded";
+                log("❌ Update Failed");
             }
         }
 
-        async function loadConfig() {
-            const cfg = await apiCall('/config');
-            if (cfg) {
-                if (cfg.symbol) document.getElementById('symbol').value = cfg.symbol;
-                if (cfg.spread) document.getElementById('spread').value = cfg.spread;
-                if (cfg.max_positions) {
-                    document.getElementById('max_positions').value = cfg.max_positions;
-                    document.getElementById('max-pos-disp').textContent = cfg.max_positions;
-                    renderLotInputs(cfg.step_lots);
-                }
-                ['buy_stop_tp', 'buy_stop_sl', 'sell_stop_tp', 'sell_stop_sl', 'max_runtime_minutes', 'max_drawdown_usd'].forEach(k => {
-                    if (cfg[k] !== undefined) document.getElementById(k).value = cfg[k];
-                });
-            }
-        }
-
+        // --- 4. Bot Control & Status ---
         async function toggleBot() {
             const btn = document.getElementById('toggle-btn');
             const action = btn.textContent.includes('Start') ? 'start' : 'stop';
-            // Log manually on user click
+
             if (action === 'start') log("⏳ Starting...");
             else log("⏳ Stopping...");
 
@@ -573,24 +559,54 @@
             fetchStatus();
         }
 
+        async function fetchStatus() {
+            const status = await apiCall('/status');
+            if (!status) return;
+
+            document.getElementById('price-display').textContent = status.current_price ? status.current_price.toFixed(2) : '---';
+            document.getElementById('pos-count').textContent = status.open_positions || 0;
+            document.getElementById('pending-count').textContent = status.pending_orders || 0;
+            document.getElementById('drawdown-display').textContent = `$${(status.current_drawdown || 0).toFixed(2)}`;
+
+            const statusBadge = document.getElementById('status-badge');
+            const toggleBtn = document.getElementById('toggle-btn');
+
+            if (status.running) {
+                statusBadge.innerHTML = '<div class="h-2 w-2 rounded-full bg-green-400 animate-pulse"></div> Active';
+                statusBadge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-green-500/10 text-green-500 border border-green-500/20";
+                toggleBtn.textContent = "Stop Bot";
+                toggleBtn.className = "px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded";
+                if (!lastRunningState) log("🚀 Bot Started");
+            } else {
+                statusBadge.innerHTML = '<div class="h-2 w-2 rounded-full bg-slate-400"></div> Offline';
+                statusBadge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400";
+                toggleBtn.textContent = "Start Bot";
+                toggleBtn.className = "px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded";
+                if (lastRunningState) log("🛑 Bot Stopped");
+            }
+            lastRunningState = status.running;
+        }
+
         function renderLotInputs(existing = []) {
             const count = parseInt(document.getElementById('max_positions').value) || 1;
             const container = document.getElementById('lots-container');
             container.innerHTML = '';
             for (let i = 0; i < count; i++) {
-                const val = existing[i] || 0.01;
+                const val = existing[i] !== undefined ? existing[i] : 0.01;
                 container.innerHTML += `<input type="number" id="lot_${i}" step="0.01" value="${val}" class="p-1 text-xs rounded bg-slate-900 border border-slate-600 text-center">`;
             }
         }
 
         function logout() { supabase.auth.signOut(); }
         function startPolling() { if (updateInterval) clearInterval(updateInterval); updateInterval = setInterval(fetchStatus, 1000); }
-        function log(msg) { document.getElementById('logs').innerHTML = `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>` + document.getElementById('logs').innerHTML; }
+        function log(msg) {
+            const logs = document.getElementById('logs');
+            logs.innerHTML = `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>` + logs.innerHTML;
+        }
 
         initSupabase();
         renderLotInputs();
     </script>
 </body>
-
 
 </html>
