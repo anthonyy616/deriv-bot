@@ -14,9 +14,9 @@ class GridStrategy:
         
         # --- State Management ---
         # 1. Fixed Price Levels
-        self.level_top = None    # Initial + Spread
-        self.level_bottom = None # Initial - Spread
-        self.level_center = None # Initial Price
+        self.level_top = None    
+        self.level_bottom = None 
+        self.level_center = None 
         
         # 2. Logic State (The "Stack")
         self.state = "START"
@@ -26,6 +26,9 @@ class GridStrategy:
         self.current_price = 0 
         self.session = None
         self.start_time = 0 
+        
+        # 3. Deal Tracking (To prevent infinite reset loops)
+        self.last_processed_ticket = 0
 
     @property
     def config(self):
@@ -38,8 +41,20 @@ class GridStrategy:
         self.running = True
         self.session = aiohttp.ClientSession()
         self.start_time = time.time()
+        
+        # Initialize last ticket to current max so we only look forward
+        try:
+            async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=60", timeout=2) as resp:
+                if resp.status == 200:
+                    deals = await resp.json()
+                    if deals:
+                        # Store the highest ticket number we see on startup
+                        self.last_processed_ticket = max(d['ticket'] for d in deals)
+        except Exception:
+            pass
+
         self.reset_cycle()
-        print(f"✅ Strategy Started. Symbol: {self.symbol}")
+        print(f"✅ Strategy Started. Symbol: {self.symbol} | Last Ticket: {self.last_processed_ticket}")
 
     async def stop(self):
         self.running = False
@@ -49,14 +64,17 @@ class GridStrategy:
         print("🛑 Strategy Stopped.")
 
     def reset_cycle(self):
-        """ Hard Reset: Clears levels and restarts iteration from scratch """
+        """ 
+        Soft Reset: Clears levels/steps to start a fresh round.
+        Does NOT clear 'last_processed_ticket' or 'running' state.
+        """
         self.level_top = None
         self.level_bottom = None
         self.level_center = None
         self.state = "START"
         self.current_step = 0
         self.last_trigger_time = 0
-        print("🔄 Cycle Reset: Waiting for new Initial Price...")
+        print("🔄 Round Reset: Clean state, waiting for next tick to start new round...")
 
     async def on_external_tick(self, tick_data):
         if not self.running: return
@@ -72,7 +90,7 @@ class GridStrategy:
         bid = tick_data['bid']
         point = tick_data.get('point', 0.001)
         
-        # 1. Initialization (First Tick of Cycle)
+        # 1. Initialization (First Tick of Round)
         if self.level_center is None:
             spread_points = self.config.get('spread', 2) 
             spread_val = spread_points * point 
@@ -81,8 +99,7 @@ class GridStrategy:
             self.level_top = self.level_center + spread_val
             self.level_bottom = self.level_center - spread_val
             
-            print(f"🎯 Channel Created: Top={self.level_top:.5f} | Center={self.level_center:.5f} | Bottom={self.level_bottom:.5f}")
-            print(f"waiting for breakouts...")
+            print(f"🎯 New Round: Center={self.level_center:.5f} | Top={self.level_top:.5f} | Bottom={self.level_bottom:.5f}")
             return
 
         # 2. Execute Ping-Pong Logic
@@ -147,6 +164,7 @@ class GridStrategy:
         sl_usd = self.config.get('buy_stop_sl') if action == 'buy' else self.config.get('sell_stop_sl')
         
         try:
+            # Pure Distance: Input 10 = 10 Price Units
             tp_points = int(abs(tp_usd) / point) if tp_usd > 0 else 0
             sl_points = int(abs(sl_usd) / point) if sl_usd > 0 else 0
         except:
@@ -174,25 +192,44 @@ class GridStrategy:
 
     async def check_stopping_conditions(self):
         if not self.session: return False
+        
         try:
+            # 1. SOFT STOP: TP/SL Hit -> Reset Round (Close All & Restart)
             async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=5", timeout=2) as resp:
                 if resp.status == 200:
                     deals = await resp.json()
-                    tp_hit = any(d['profit'] > 0 for d in deals)
-                    sl_hit = any(d['profit'] < 0 for d in deals)
-                    if tp_hit or sl_hit:
-                        log_msg = "🎉 TP Hit!" if tp_hit else "💀 SL Hit!"
-                        print(f"{log_msg} Resetting Cycle...")
-                        await self.session.post(f"{self.mt5_bridge_url}/close_all", timeout=2)
-                        self.reset_cycle()
-                        await asyncio.sleep(2) 
-                        return True
+                    
+                    # Filter for NEW deals only (ticket > last_processed)
+                    new_deals = [d for d in deals if d['ticket'] > self.last_processed_ticket]
+                    
+                    if new_deals:
+                        # Update our watermark so we don't process these again
+                        self.last_processed_ticket = max(d['ticket'] for d in new_deals)
+                        
+                        tp_hit = any(d['profit'] > 0 for d in new_deals)
+                        sl_hit = any(d['profit'] < 0 for d in new_deals)
+                        
+                        if tp_hit or sl_hit:
+                            log_msg = "🎉 TP Hit!" if tp_hit else "💀 SL Hit!"
+                            print(f"{log_msg} Closing All & Starting New Round...")
+                            
+                            # A. Wipe the Board (Positions + Pending)
+                            await self.session.post(f"{self.mt5_bridge_url}/close_all", timeout=2)
+                            
+                            # B. Reset State (Config remains same)
+                            self.reset_cycle()
+                            
+                            # C. Cooldown to ensure MT5 processes closes
+                            await asyncio.sleep(2) 
+                            return True
 
+            # 2. HARD STOP: Max Drawdown / Max Time -> Fully Stop Bot
             async with self.session.get(f"{self.mt5_bridge_url}/account_info", timeout=2) as resp:
                 if resp.status == 200:
                     info = await resp.json()
                     balance = info.get('balance', 0)
                     equity = info.get('equity', 0)
+                    
                     max_dd = self.config.get('max_drawdown_usd', 0)
                     if max_dd > 0 and (balance - equity) >= max_dd:
                         print(f"🛑 Max Drawdown Reached. Stopping Bot.")
@@ -207,6 +244,7 @@ class GridStrategy:
                     await self.session.post(f"{self.mt5_bridge_url}/close_all", timeout=2)
                     await self.stop()
                     return True
+                    
         except Exception:
             pass
         return False
