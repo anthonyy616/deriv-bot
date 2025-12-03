@@ -24,6 +24,12 @@ class GridStrategy:
     def config(self):
         return self.config_manager.get_config()
 
+    # --- CRITICAL FIX: Interface for server.py ---
+    async def start_ticker(self):
+        """Called by server.py when config changes to restart logic"""
+        self.reset_cycle()
+    # ---------------------------------------------
+
     async def start(self):
         self.running = True
         self.session = aiohttp.ClientSession()
@@ -74,14 +80,10 @@ class GridStrategy:
             print(f"🎯 Levels Set | Top: {self.level_top:.5f} | Center: {self.level_center:.5f} | Bottom: {self.level_bottom:.5f}")
             
             # 2. Place Initial Straddle (Pending Orders)
-            # 0.1 Lot Buy Stop @ Top, 0.1 Lot Sell Stop @ Bottom
             vol = self.get_volume(0)
             await self.send_pending("buy_stop", self.level_top, vol)
             await self.send_pending("sell_stop", self.level_bottom, vol)
             return
-
-        # Note: We do NOT execute logic here anymore. 
-        # Logic is now Event-Driven (Deal Detection) in run_watchdog.
 
     async def run_watchdog(self):
         """ Monitors for Deals (Entry/TP/SL) and updates Pending Orders """
@@ -91,7 +93,7 @@ class GridStrategy:
                 await self.check_deals()
             except Exception as e:
                 print(f"Watchdog Error: {e}")
-            await asyncio.sleep(0.5) # Fast polling for deal updates
+            await asyncio.sleep(0.5) 
 
     async def check_deals(self):
         if not self.session: return
@@ -114,58 +116,27 @@ class GridStrategy:
                 print(f"🚨 TP/SL HIT ({deal['profit']}) -> RESETTING...")
                 await self.session.post(f"{self.mt5_bridge_url}/close_all")
                 self.reset_cycle()
-                return # Stop processing other deals
+                return 
 
             # 2. Check for ENTRY (Profit == 0 usually for entry deals)
-            # Deal Type 0 = Buy, 1 = Sell
             deal_type = deal['type'] 
             self.current_step += 1
             next_vol = self.get_volume(self.current_step)
 
             print(f"⚡ Deal Detected: {'BUY' if deal_type == 0 else 'SELL'} | Step {self.current_step}")
 
-            # CLEANUP: Remove old pending orders (e.g. the other side of the straddle)
+            # CLEANUP: Remove old pending orders
             await self.session.post(f"{self.mt5_bridge_url}/cancel_orders")
 
             # LOGIC: Tightening Channel
-            if deal_type == 0: # We just BOUGHT (at Top or Center)
+            if deal_type == 0: # Bought
                 # Next move: SELL STOP at CENTER
-                # (User Rule: "SS moves to 10")
                 target_price = self.level_center
                 print(f"➡ Placing Sell Stop @ {target_price:.5f}")
                 await self.send_pending("sell_stop", target_price, next_vol)
             
-            elif deal_type == 1: # We just SOLD (at Bottom or Center)
-                # Next move: BUY STOP at TOP (or Center?)
-                # User Rule: "If SS hits... place BS again at 12 (Top)"
-                # But if we sold at Bottom (8), we target Center (10).
-                # If we sold at Center (10), we target Top (12).
-                
-                # Simple logic: If we hold a Sell, we want to Buy above.
-                # If we just sold at Bottom (8), next Buy is Center (10).
-                # If we just sold at Center (10), next Buy is Top (12).
-                
-                # To distinguish, check the Deal Price?
-                # Simplify: "Tightening" means we oscillate [Center, Top] OR [Bottom, Center].
-                
-                # Assuming first breakout was UP (Buy @ Top):
-                # We are locked in [Center, Top].
-                # Sell was at Center. Next Buy is Top.
-                
-                # Assuming first breakout was DOWN (Sell @ Bottom):
-                # We are locked in [Bottom, Center].
-                # Sell was at Bottom. Next Buy is Center.
-                
-                # Robust Calculation:
-                # If Deal Price < Center (approx): We are at Bottom. Next Buy = Center.
-                # If Deal Price >= Center (approx): We are at Center. Next Buy = Top.
-                
-                # Note: Deal price might deviate slightly, so use 0.1 tolerance or just logic
-                # Actually, simpler: Always default to restoring the tight channel.
-                # If we sold, place Buy Stop at Level Top (if we are high) or Center (if we are low).
-                
-                # For this specific user request ("BS hits 12, SS moves to 10... SS hits 10, BS moves to 12"):
-                # This describes the [10, 12] channel.
+            elif deal_type == 1: # Sold
+                # Next move: BUY STOP at TOP
                 target_price = self.level_top
                 print(f"➡ Placing Buy Stop @ {target_price:.5f}")
                 await self.send_pending("buy_stop", target_price, next_vol)
@@ -176,7 +147,7 @@ class GridStrategy:
             "action": action,
             "symbol": self.symbol,
             "volume": float(volume),
-            "price": float(price), # CRITICAL: Send the exact calculated level
+            "price": float(price),
             "sl_points": 0,
             "tp_points": 0,
             "comment": f"Step {self.current_step}"
