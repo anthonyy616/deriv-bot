@@ -2,7 +2,6 @@ import asyncio
 import time
 import aiohttp
 import os
-import math
 
 class GridStrategy:
     def __init__(self, config_manager):
@@ -11,16 +10,18 @@ class GridStrategy:
         self.running = False
         self.mt5_bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
         
-        # --- Grid Levels (Fixed upon initialization) ---
+        # --- VIRTUAL LEVELS (In Memory Only) ---
+        self.virtual_buy_trigger = None  # Price to trigger a BUY
+        self.virtual_sell_trigger = None # Price to trigger a SELL
+        
+        # --- Grid State ---
         self.level_top = None
         self.level_bottom = None
         self.level_center = None
-        
         self.current_step = 0
+        
         self.session = None
         self.last_processed_ticket = 0
-        
-        # For UI Display
         self.current_price = 0.0
 
     @property
@@ -28,193 +29,207 @@ class GridStrategy:
         return self.config_manager.get_config()
 
     async def start_ticker(self):
-        """Resets logic when config changes."""
+        print("🔄 Config Change: Resetting Virtual Grid...")
         self.reset_cycle()
 
     async def start(self):
         self.running = True
         self.session = aiohttp.ClientSession()
         
-        # Sync with existing deals to avoid processing old history
+        # Sync history watermark
         try:
-            async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=60", timeout=2) as resp:
+            async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=600", timeout=5) as resp:
                 if resp.status == 200:
                     deals = await resp.json()
-                    if deals: 
-                        self.last_processed_ticket = max(d['ticket'] for d in deals)
+                    if deals: self.last_processed_ticket = max(d['ticket'] for d in deals)
         except: pass
 
         self.reset_cycle()
-        asyncio.create_task(self.run_watchdog())
-        print(f"✅ Strategy Started: {self.symbol}")
+        asyncio.create_task(self.run_logic_loop()) # Main Brain
+        print(f"✅ Strategy Started (Virtual Mode): {self.symbol}")
 
     async def stop(self):
         self.running = False
-        if self.session: 
-            await self.session.close()
-            self.session = None
+        if self.session: await self.session.close()
         print("🛑 Strategy Stopped.")
 
     def reset_cycle(self):
-        """Clears levels and resets step counter."""
+        """Wipes the virtual board."""
         self.level_top = None
         self.level_bottom = None
         self.level_center = None
+        self.virtual_buy_trigger = None
+        self.virtual_sell_trigger = None
         self.current_step = 0
-        print("🔄 Cycle Reset: Waiting for tick to define grid...")
+        print("🔄 Virtual Grid Reset: Waiting for price...")
 
     async def on_external_tick(self, tick_data):
-        """Handles the very first setup (placing initial Buy/Sell stops)."""
+        """
+        Calculates levels on the first tick, then monitors triggers on every subsequent tick.
+        """
         if not self.running: return
 
-        ask = tick_data['ask']
-        self.current_price = ask # Update for UI
+        # 1. Update Price
+        ask = float(tick_data['ask'])
+        bid = float(tick_data['bid'])
+        self.current_price = ask 
 
-        # 1. Initialize Levels (Only if not set)
+        # 2. Initialization (First Tick Only)
         if self.level_center is None:
-            # Interpret 'spread' as Raw Price Radius (e.g. 6.0)
-            spread_val = float(self.config.get('spread', 6.0))
-            
-            # Define exact grid levels
-            self.level_center = ask
-            self.level_top = self.level_center + spread_val
-            self.level_bottom = self.level_center - spread_val
-            
-            print(f"🎯 Grid Set | Top: {self.level_top:.2f} | Center: {self.level_center:.2f} | Bottom: {self.level_bottom:.2f}")
-            
-            # 2. Place Initial Straddle (Step 0 Lots)
-            vol = self.get_volume(0)
-            
-            # Place both sides
-            await self.send_pending("buy_stop", self.level_top, vol)
-            await self.send_pending("sell_stop", self.level_bottom, vol)
+            self.init_grid(ask)
+            return
 
-    async def run_watchdog(self):
-        """Background task to monitor executions."""
+        # 3. Check Virtual Triggers (The "Virtual Order" Logic)
+        # We only check triggers if we haven't maxed out positions
+        max_pos = int(self.config.get('max_positions', 5))
+        if self.current_step >= max_pos:
+            return
+
+        # Check BUY Trigger
+        if self.virtual_buy_trigger and ask >= self.virtual_buy_trigger:
+            print(f"⚡ VIRTUAL BUY TRIGGER HIT @ {ask} (Target: {self.virtual_buy_trigger})")
+            await self.execute_market_order("buy", ask)
+            
+        # Check SELL Trigger
+        elif self.virtual_sell_trigger and bid <= self.virtual_sell_trigger:
+            print(f"⚡ VIRTUAL SELL TRIGGER HIT @ {bid} (Target: {self.virtual_sell_trigger})")
+            await self.execute_market_order("sell", bid)
+
+    def init_grid(self, price):
+        """Sets the initial Top/Center/Bottom and Virtual Triggers."""
+        spread = float(self.config.get('spread', 6.0))
+        
+        self.level_center = price
+        self.level_top = price + spread
+        self.level_bottom = price - spread
+        
+        # Initial State: Pending Buy at Top, Pending Sell at Bottom
+        self.virtual_buy_trigger = self.level_top
+        self.virtual_sell_trigger = self.level_bottom
+        
+        print(f"🎯 Grid Initialized (Virtual):")
+        print(f"   Top (Buy Trig): {self.level_top}")
+        print(f"   Center:         {self.level_center}")
+        print(f"   Bottom (Sel Trig): {self.level_bottom}")
+
+    async def execute_market_order(self, direction, price):
+        """
+        Fires the actual trade to the broker and updates the virtual state.
+        """
+        # 1. Get correct volume for this step
+        vol = self.get_volume(self.current_step)
+        
+        # 2. Send Market Order (IOC)
+        print(f"🚀 EXECUTING {direction.upper()} | Step {self.current_step} | Lot: {vol}")
+        success = await self.send_market_request(direction, price, vol)
+        
+        if not success:
+            print("❌ Order failed via Bridge. Retrying next tick...")
+            return # Don't advance state if order failed
+
+        # 3. Advance State (The "Ping-Pong" Logic)
+        self.current_step += 1
+        
+        if direction == "buy":
+            # We just bought. 
+            # 1. Disable Buy Trigger (Can't buy again immediately)
+            self.virtual_buy_trigger = None 
+            
+            # 2. Set Sell Trigger (One level down)
+            # If we bought at Top, Sell Trigger is Center
+            # If we bought at Center, Sell Trigger is Bottom
+            dist_top = abs(price - self.level_top)
+            dist_center = abs(price - self.level_center)
+            
+            if dist_top < dist_center:
+                self.virtual_sell_trigger = self.level_center
+                print(f"➡ Next Action: Wait for SELL @ Center ({self.level_center})")
+            else:
+                self.virtual_sell_trigger = self.level_bottom
+                print(f"➡ Next Action: Wait for SELL @ Bottom ({self.level_bottom})")
+
+        elif direction == "sell":
+            # We just sold.
+            # 1. Disable Sell Trigger
+            self.virtual_sell_trigger = None
+            
+            # 2. Set Buy Trigger (One level up)
+            dist_bottom = abs(price - self.level_bottom)
+            dist_center = abs(price - self.level_center)
+            
+            if dist_bottom < dist_center:
+                self.virtual_buy_trigger = self.level_center
+                print(f"➡ Next Action: Wait for BUY @ Center ({self.level_center})")
+            else:
+                self.virtual_buy_trigger = self.level_top
+                print(f"➡ Next Action: Wait for BUY @ Top ({self.level_top})")
+
+    async def run_logic_loop(self):
+        """Background loop to check for TP/SL (Nuclear Reset)."""
         while self.running:
             try:
-                await self.check_deals()
+                await self.check_sl_tp()
             except Exception as e:
-                print(f"Watchdog Error: {e}")
-            await asyncio.sleep(0.5) 
+                print(f"Logic Loop Error: {e}")
+            await asyncio.sleep(1.0)
 
-    async def check_deals(self):
+    async def check_sl_tp(self):
         if not self.session: return
         
-        # 1. Poll Bridge
-        async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=10") as resp:
+        # Check recent deals for any 'EXIT' types (SL/TP)
+        async with self.session.get(f"{self.mt5_bridge_url}/recent_deals?seconds=600") as resp:
             if resp.status != 200: return
             deals = await resp.json()
 
-        # 2. Filter New Deals
         new_deals = [d for d in deals if d['ticket'] > self.last_processed_ticket]
         if not new_deals: return
-        
-        # Update watermark
         self.last_processed_ticket = max(d['ticket'] for d in new_deals)
 
         for deal in new_deals:
-            # --- CASE A: TP/SL Hit (Nuclear Reset) ---
-            # If profit is not 0, it means a position closed (TP/SL).
-            if deal['profit'] != 0:
-                print(f"🚨 TP/SL HIT ({deal['profit']}) -> RESETTING EVERYTHING...")
+            # DEAL_ENTRY_OUT (1) means a position was closed
+            # If ANY position closes, we reset.
+            if deal.get('entry', 0) == 1 or deal['profit'] != 0:
+                print(f"🚨 POSITION CLOSED (Profit: {deal['profit']}) -> NUCLEAR RESET")
                 await self.session.post(f"{self.mt5_bridge_url}/close_all")
                 self.reset_cycle()
-                return 
-
-            # --- CASE B: Entry Execution (Next Step) ---
-            # Profit is 0, so this is a new market entry.
-            self.current_step += 1
-            max_pos = int(self.config.get('max_positions', 5))
-
-            print(f"⚡ Deal Detected: {deal['type']} (0=Buy, 1=Sell) | Step {self.current_step}")
-
-            # 1. Cancel all remaining pending orders (The "Push/Pop" logic)
-            await self.session.post(f"{self.mt5_bridge_url}/cancel_orders")
-
-            # 2. Check Limit
-            if self.current_step >= max_pos:
-                print("🛑 Max positions reached. No new orders.")
                 return
 
-            # 3. Determine Next Move
-            next_vol = self.get_volume(self.current_step)
-            deal_type = deal['type']  # 0 = Buy, 1 = Sell
-            
-            # We snap the execution price to our known grid levels to prevent drift
-            # logic: "Where did we just execute?"
-            exec_price = deal.get('price', 0) # Fallback if price missing, though rare
-            
-            target_price = 0.0
-            next_action = ""
-
-            if deal_type == 0: 
-                # === We just BOUGHT ===
-                # Logic: We must now place a SELL STOP.
-                # If we bought at Top, new Sell is at Center.
-                # If we bought at Center (during oscillating down), new Sell is at Bottom.
-                
-                dist_to_top = abs(exec_price - self.level_top)
-                dist_to_center = abs(exec_price - self.level_center)
-                
-                if dist_to_top < dist_to_center:
-                    target_price = self.level_center # Bought at Top -> Sell Center
-                else:
-                    target_price = self.level_bottom # Bought at Center -> Sell Bottom
-                
-                next_action = "sell_stop"
-
-            elif deal_type == 1:
-                # === We just SOLD ===
-                # Logic: We must now place a BUY STOP.
-                # If we sold at Bottom, new Buy is at Center.
-                # If we sold at Center (during oscillating up), new Buy is at Top.
-
-                dist_to_bottom = abs(exec_price - self.level_bottom)
-                dist_to_center = abs(exec_price - self.level_center)
-
-                if dist_to_bottom < dist_to_center:
-                    target_price = self.level_center # Sold at Bottom -> Buy Center
-                else:
-                    target_price = self.level_top    # Sold at Center -> Buy Top
-
-                next_action = "buy_stop"
-
-            # 4. Place the Next Order
-            print(f"➡ Placing {next_action} @ {target_price:.5f} (Vol: {next_vol})")
-            await self.send_pending(next_action, target_price, next_vol)
-
-    async def send_pending(self, action, price, volume):
-        """ Sends order with configured SL/TP distances """
-        # Get SL/TP from Config (Raw Values)
-        if "buy" in action.lower():
-            sl_dist = float(self.config.get('buy_stop_sl', 0))
-            tp_dist = float(self.config.get('buy_stop_tp', 0))
+    async def send_market_request(self, direction, price, volume):
+        """Sends immediate market order."""
+        # Get SL/TP distances
+        if "buy" in direction:
+            sl = float(self.config.get('buy_stop_sl', 0))
+            tp = float(self.config.get('buy_stop_tp', 0))
         else:
-            sl_dist = float(self.config.get('sell_stop_sl', 0))
-            tp_dist = float(self.config.get('sell_stop_tp', 0))
+            sl = float(self.config.get('sell_stop_sl', 0))
+            tp = float(self.config.get('sell_stop_tp', 0))
 
         payload = {
-            "action": action,
+            "action": direction, # "buy" or "sell" (Market)
             "symbol": self.symbol,
             "volume": float(volume),
-            "price": float(price),
-            "sl_points": sl_dist,
-            "tp_points": tp_dist,
+            "price": float(price), # Ignored for market, but good for logs
+            "sl_points": sl,
+            "tp_points": tp,
             "comment": f"Step {self.current_step}"
         }
+        
         try:
-            await self.session.post(f"{self.mt5_bridge_url}/execute_signal", json=payload)
+            async with self.session.post(f"{self.mt5_bridge_url}/execute_signal", json=payload) as resp:
+                if resp.status == 200: return True
+                print(f"❌ Bridge Rejected: {await resp.text()}")
+                return False
         except Exception as e:
-            print(f"❌ Failed to send order: {e}")
+            print(f"❌ Connection Error: {e}")
+            return False
 
     def get_volume(self, step):
         step_lots = self.config.get('step_lots', [])
-        if not step_lots: return 0.01
+        # TRACER: Prove we are reading the array
+        print(f"🔍 Lot Logic: Step {step} | Array: {step_lots}")
         
-        # If step exceeds array, use the last defined lot size
-        if step < len(step_lots):
-            return step_lots[step]
+        if not step_lots: return 0.01
+        if step < len(step_lots): return step_lots[step]
         return step_lots[-1]
 
     def get_status(self):
@@ -224,5 +239,8 @@ class GridStrategy:
             "step": self.current_step,
             "top": self.level_top,
             "center": self.level_center,
-            "bottom": self.level_bottom
+            "bottom": self.level_bottom,
+            # Debug info for UI
+            "next_buy": self.virtual_buy_trigger,
+            "next_sell": self.virtual_sell_trigger
         }
