@@ -55,20 +55,16 @@ app = FastAPI(title="MT5 Bridge", lifespan=lifespan)
 def normalize_price(price, tick_size):
     """
     Rounds price to the nearest tick and converts to FLOAT via STRING.
-    This strips 'invisible' floating point artifacts (e.g. 100.0000001).
+    This prevents floating point artifacts.
     """
     if tick_size == 0: return price
     
-    # 1. Math Rounding
     rounded_price = round(price / tick_size) * tick_size
     
-    # 2. Precision Calculation (e.g., 0.01 -> 2 decimals)
-    # This prevents 100.20 becoming 100.1999999999
     decimal_places = 0
     if "." in str(tick_size):
         decimal_places = len(str(tick_size).split(".")[1].rstrip("0"))
         
-    # 3. String formatting is the only way to guarantee exact precision in Python
     formatted_price = f"{rounded_price:.{decimal_places}f}"
     return float(formatted_price)
 
@@ -83,14 +79,19 @@ async def execute_trade(signal: TradeSignal):
         # Metadata
         tick_size = symbol_info.trade_tick_size
         point = symbol_info.point
-        stops_level = symbol_info.trade_stops_level * point # Convert points to price
+        digits = symbol_info.digits
+        
+        # --- CRITICAL: BROKER STOPS LEVEL ---
+        # Convert broker's minimum stops level (in POINTS) to a price value
+        min_stop_distance_price = symbol_info.trade_stops_level * point
+        # Add a small buffer (e.g., 5 points = 5 * point) for extra safety
+        safety_buffer_price = 5 * point
+        min_allowed_distance = min_stop_distance_price + safety_buffer_price
         
         # Order Type
         action_map = {
-            "buy": mt5.ORDER_TYPE_BUY,
-            "sell": mt5.ORDER_TYPE_SELL,
-            "buy_stop": mt5.ORDER_TYPE_BUY_STOP,   
-            "sell_stop": mt5.ORDER_TYPE_SELL_STOP  
+            "buy": mt5.ORDER_TYPE_BUY, "sell": mt5.ORDER_TYPE_SELL,
+            "buy_stop": mt5.ORDER_TYPE_BUY_STOP, "sell_stop": mt5.ORDER_TYPE_SELL_STOP
         }
         order_type = action_map.get(signal.action.lower())
         if order_type is None: raise HTTPException(400, "Invalid action")
@@ -99,7 +100,7 @@ async def execute_trade(signal: TradeSignal):
         tick = mt5.symbol_info_tick(signal.symbol)
         if not tick: raise HTTPException(500, "No tick data")
 
-        # 1. Determine Raw Price
+        # 1. Determine Raw Price & Normalize (For Market Orders, this is just the current price)
         if "stop" in signal.action.lower():
             raw_price = signal.price
             trade_action = mt5.TRADE_ACTION_PENDING
@@ -107,36 +108,38 @@ async def execute_trade(signal: TradeSignal):
             raw_price = tick.ask if signal.action.lower() == "buy" else tick.bid
             trade_action = mt5.TRADE_ACTION_DEAL
 
-        # 2. STRICT VALIDATION: Stops Level & Direction
-        # If pending order is too close or on wrong side, MT5 throws 10015
-        if "buy_stop" in signal.action.lower():
-            min_price = tick.ask + stops_level
-            if raw_price < min_price:
-                print(f"⚠️ Adjustment: Buy Stop {raw_price} too close/low (Ask: {tick.ask}). Moving to {min_price}")
-                raw_price = min_price
-                
-        elif "sell_stop" in signal.action.lower():
-            max_price = tick.bid - stops_level
-            if raw_price > max_price:
-                print(f"⚠️ Adjustment: Sell Stop {raw_price} too close/high (Bid: {tick.bid}). Moving to {max_price}")
-                raw_price = max_price
-
-        # 3. Normalize (The Fix for 10015)
+        # Apply normalization to price
         price = normalize_price(raw_price, tick_size)
 
-        # 4. SL/TP Calculation
-        if "buy" in signal.action.lower():
-            sl = price - signal.sl_points
-            tp = price + signal.tp_points
+
+        # 2. SL/TP Dynamic Clamping
+        # Clamping logic: ONLY USE USER'S INPUT IF IT IS > BROKER'S MINIMUM
+        
+        # SL CLAMPING
+        if signal.sl_points > 0:
+            final_sl_distance = max(signal.sl_points, min_allowed_distance)
+            if "buy" in signal.action.lower():
+                sl = price - final_sl_distance
+            else:
+                sl = price + final_sl_distance
         else:
-            sl = price + signal.sl_points
-            tp = price - signal.tp_points
+            sl = 0.0
+            
+        # TP CLAMPING
+        if signal.tp_points > 0:
+            final_tp_distance = max(signal.tp_points, min_allowed_distance)
+            if "buy" in signal.action.lower():
+                tp = price + final_tp_distance
+            else:
+                tp = price - final_tp_distance
+        else:
+            tp = 0.0
 
-        # Normalize SL/TP
-        sl = normalize_price(sl, tick_size) if signal.sl_points > 0 else 0.0
-        tp = normalize_price(tp, tick_size) if signal.tp_points > 0 else 0.0
+        # Normalize final SL/TP prices
+        sl = normalize_price(sl, tick_size) if sl != 0.0 else 0.0
+        tp = normalize_price(tp, tick_size) if tp != 0.0 else 0.0
 
-        # 5. Build Request (REMOVED type_filling to use Auto/Default)
+        # 3. Build Request
         request = {
             "action": trade_action,
             "symbol": signal.symbol,
@@ -149,22 +152,15 @@ async def execute_trade(signal: TradeSignal):
             "magic": int(signal.magic),
             "comment": str(signal.comment),
             "type_time": mt5.ORDER_TIME_GTC,
-            # "type_filling": REMOVED to restore "old commit" behavior
+            # Removed type_filling to restore "old commit" behavior
         }
 
-        print(f"📡 Sending: {signal.action} @ {price} | SL: {sl} | TP: {tp}")
+        print(f"📡 Sending: {signal.action} @ {price} | SL: {sl} | TP: {tp} | Min Stop: {min_allowed_distance:.5f}")
         result = mt5.order_send(request)
         
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
             error_msg = result.comment if result else "Unknown"
             print(f"❌ Order Failed: {error_msg} ({result.retcode if result else '?'})")
-            
-            # Expanded Debugging
-            if result and result.retcode == 10015:
-                 print(f"⚠️ DEBUG: Sent Price: {price} | Tick: {tick_size}")
-                 print(f"⚠️ DEBUG: Market Ask: {tick.ask} | Bid: {tick.bid}")
-                 print(f"⚠️ DEBUG: Stops Level: {stops_level}")
-
             raise HTTPException(500, f"MT5 Error: {error_msg}")
 
         print(f"✅ ORDER SENT: {signal.action} @ {price}")
@@ -173,6 +169,8 @@ async def execute_trade(signal: TradeSignal):
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+# ... (Keep existing cancel_orders, close_all, account_info, recent_deals functions unchanged) ...
 
 @app.post("/cancel_orders")
 def cancel_pending_orders():

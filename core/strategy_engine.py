@@ -10,7 +10,7 @@ class GridStrategy:
         self.running = False
         self.mt5_bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
         
-        # --- IMMUTABLE GRID (The Anchors) ---
+        # --- IMMUTABLE GRID ANCHORS ---
         self.anchor_center = None 
         self.anchor_top = None
         self.anchor_bottom = None
@@ -20,8 +20,8 @@ class GridStrategy:
         self.virtual_sell_trigger = None 
         
         # --- State Memory ---
-        # "where did the last trade happen?" (top/center/bottom)
-        self.last_trigger_source = None 
+        # Tracks which level is currently being WATCHED (Top/Center/Bottom)
+        self.last_target_source = None 
         
         # --- General State ---
         self.current_step = 0
@@ -31,7 +31,7 @@ class GridStrategy:
         
         # --- Lifecycle ---
         self.start_time = 0
-        self.open_positions = 0
+        self.last_pos_count = 0
         self.is_resetting = False 
         self.reset_timestamp = 0
         self.iteration = 1
@@ -80,7 +80,7 @@ class GridStrategy:
         
         self.virtual_buy_trigger = None
         self.virtual_sell_trigger = None
-        self.last_trigger_source = None
+        self.last_target_source = None
         
         self.current_step = 0
         self.is_resetting = False
@@ -92,18 +92,20 @@ class GridStrategy:
         ask = float(tick_data['ask'])
         bid = float(tick_data['bid'])
         self.current_price = ask 
-        self.open_positions = tick_data.get('positions_count', 0)
-
+        current_pos_count = tick_data.get('positions_count', 0)
+        
         # 1. CRITICAL: Check for SL/TP (Nuclear Reset) INSTANTLY
-        if self.open_positions < self.current_step and not self.is_resetting and self.current_step > 0:
-            # If open positions dropped below current step, something closed.
-            print(f"🚨 POSITION DROP DETECTED ({self.current_step} -> {self.open_positions}). NUCLEAR RESET.")
+        if current_pos_count < self.last_pos_count and not self.is_resetting and self.current_step > 0:
+            print(f"🚨 POSITIONS DROPPED. NUCLEAR RESET TRIGGERED!")
             self.trigger_nuclear_reset()
+            self.last_pos_count = current_pos_count
             return
+
+        self.last_pos_count = current_pos_count
 
         # 2. Handle Reset State
         if self.is_resetting:
-            if self.open_positions == 0:
+            if current_pos_count == 0:
                 if self.is_time_up():
                     print("🛑 Max Runtime Reached. Stopping.")
                     await self.stop()
@@ -112,13 +114,12 @@ class GridStrategy:
                 self.iteration += 1
                 self.reset_cycle()
             else:
-                # Retry close_all if stuck
                 if time.time() - self.reset_timestamp > 2:
                     await self.session.post(f"{self.mt5_bridge_url}/close_all")
                     self.reset_timestamp = time.time()
             return
 
-        # 3. Initialize Grid (First Tick)
+        # 3. Initialization
         if self.anchor_center is None:
             self.init_immutable_grid(ask)
             return
@@ -131,10 +132,10 @@ class GridStrategy:
         if self.is_time_up():
             return
 
-        # 5. SNIPER LOGIC (Market Execution)
+        # 5. SNIPER LOGIC
         if self.virtual_buy_trigger and ask >= self.virtual_buy_trigger:
             print(f"⚡ SNIPER: Buy Hit {self.virtual_buy_trigger}")
-            # Determine source based on which trigger was active
+            # Source must be passed deterministically
             source = "top" if self.virtual_buy_trigger == self.anchor_top else "center"
             await self.execute_market_order("buy", ask, source)
             
@@ -161,11 +162,12 @@ class GridStrategy:
         self.anchor_top = price + spread
         self.anchor_bottom = price - spread
         
-        # Initial: Buy Top, Sell Bottom
+        # Initial State: Watch Top and Bottom
         self.virtual_buy_trigger = self.anchor_top
         self.virtual_sell_trigger = self.anchor_bottom
+        self.last_target_source = "start" # Mark the initial dual watch state
         
-        print(f"⚓ ANCHOR: {self.anchor_center} | Top: {self.anchor_top} | Bot: {self.anchor_bottom}")
+        print(f"⚓ ANCHOR: {self.anchor_center} | Spread: {spread} | Full Distance: {self.anchor_top - self.anchor_bottom}")
 
     async def execute_market_order(self, direction, price, source):
         vol = self.get_volume(self.current_step)
@@ -177,34 +179,52 @@ class GridStrategy:
             return
 
         self.current_step += 1
-        self.last_trigger_source = source
         
-        # --- DETERMINISTIC STATE MACHINE ---
+        # --- DETERMINISTIC PING PONG TRANSITION (FIXES 22 PIP GAP) ---
+        
         if direction == "buy":
             self.virtual_buy_trigger = None # Lock Buy
             
             if source == "top":
-                # Buy @ Top -> Next: Sell @ Center (10 pips down)
+                # Buy @ Top -> Next Target: Sell @ Center (10 pips away)
                 self.virtual_sell_trigger = self.anchor_center
-                print(f"➡ Next: SELL @ Center ({self.anchor_center})")
+                self.last_target_source = "center" 
+                print(f"➡ Next Target: SELL @ Center ({self.anchor_center:.2f})")
                 
             elif source == "center":
-                # Buy @ Center -> Next: Sell @ Bottom (10 pips down)
+                # Buy @ Center -> Next Target: Sell @ Bottom (10 pips away)
                 self.virtual_sell_trigger = self.anchor_bottom
-                print(f"➡ Next: SELL @ Bottom ({self.anchor_bottom})")
+                self.last_target_source = "bottom" 
+                print(f"➡ Next Target: SELL @ Bottom ({self.anchor_bottom:.2f})")
 
         elif direction == "sell":
             self.virtual_sell_trigger = None # Lock Sell
             
             if source == "bottom":
-                # Sell @ Bottom -> Next: Buy @ Center (10 pips up)
+                # Sell @ Bottom -> Next Target: Buy @ Center (10 pips away)
                 self.virtual_buy_trigger = self.anchor_center
-                print(f"➡ Next: BUY @ Center ({self.anchor_center})")
+                self.last_target_source = "center"
+                print(f"➡ Next Target: BUY @ Center ({self.anchor_center:.2f})")
                 
             elif source == "center":
-                # Sell @ Center -> Next: Buy @ Top (10 pips up)
+                # Sell @ Center -> Next Target: Buy @ Top (10 pips away)
                 self.virtual_buy_trigger = self.anchor_top
-                print(f"➡ Next: BUY @ Top ({self.anchor_top})")
+                self.last_target_source = "top"
+                print(f"➡ Next Target: BUY @ Top ({self.anchor_top:.2f})")
+
+    async def run_logic_loop(self):
+        while self.running:
+            try:
+                # We do not call check_sl_tp here to avoid race conditions. 
+                # It is called on every tick (on_external_tick).
+                pass
+            except: pass
+            await asyncio.sleep(0.5)
+
+    async def check_sl_tp(self):
+        # NOTE: This function is now DEPRECATED as the logic moved to on_external_tick.
+        # It remains for context.
+        pass
 
     async def send_market_request(self, direction, price, volume):
         if "buy" in direction:
@@ -221,7 +241,7 @@ class GridStrategy:
             "price": float(price),
             "sl_points": sl,
             "tp_points": tp,
-            "magic": int(self.iteration), # Track iteration in magic number
+            "magic": self.iteration, 
             "comment": f"S{self.current_step}-I{self.iteration}"
         }
         try:
