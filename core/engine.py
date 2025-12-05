@@ -26,14 +26,18 @@ class TradingEngine:
                     price = data.get('current_price', 0)
                     point = data.get('point', 0.001)
                     if point == 0: point = 0.001
+                    
+                    # FIX: Capture positions count
+                    positions_count = data.get('positions_count', 0)
 
                     if price > 0:
                         # Construct tick data
                         tick_data = {
                             'symbol': data.get('symbol', 'FX Vol 20'),
                             'ask': price, 
-                            'bid': price, 
-                            'point': point
+                            'bid': price, # Using Ask for both for simplicity in Sniper
+                            'point': point,
+                            'positions_count': positions_count # PASS TO STRATEGY
                         }
                         
                         # 2. Push tick to all ACTIVE bots
@@ -45,7 +49,8 @@ class TradingEngine:
                             )
                                 
             except Exception as e:
-                pass # Suppress connection errors to keep log clean
+                # pass # Suppress connection errors to keep log clean
+                print(f"Engine Error: {e}")
             
             # 3. Poll Frequency (100ms)
             await asyncio.sleep(0.1)
