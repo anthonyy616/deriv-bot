@@ -1,5 +1,5 @@
 import asyncio
-import aiohttp
+import MetaTrader5 as mt5
 import os
 from dotenv import load_dotenv
 
@@ -9,51 +9,70 @@ class TradingEngine:
     def __init__(self, bot_manager):
         self.bot_manager = bot_manager
         self.running = True
-        self.bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
-        self.session = None
+        
+        # MT5 Configuration
+        self.login = int(os.getenv("MT5_LOGIN", 0))
+        self.password = os.getenv("MT5_PASSWORD", "")
+        self.server = os.getenv("MT5_SERVER", "")
+        self.path = os.getenv("MT5_PATH", "")
 
     async def start(self):
-        print("⚙️ Engine: High-Speed Poll Loop Active.")
-        # Persistent Session prevents TCP handshake overhead on every tick
-        self.session = aiohttp.ClientSession()
+        print("⚙️ Engine: Initializing Direct MT5 Connection...")
+        
+        # 1. Initialize MT5 (Blocking call, run once)
+        if not mt5.initialize(path=self.path):
+            print(f"❌ MT5 Init Failed: {mt5.last_error()}")
+            return
+            
+        if not mt5.login(self.login, password=self.password, server=self.server):
+            print(f"❌ MT5 Login Failed: {mt5.last_error()}")
+            return
+            
+        print("✅ MT5 Connected. Starting High-Speed Loop.")
         await self.run_tick_loop()
 
     async def run_tick_loop(self):
+        # Cache symbol info to avoid API spam
+        symbol = "FX Vol 20" # Default, will be updated by strategy
+        
         while self.running:
             try:
-                if self.session.closed:
-                    self.session = aiohttp.ClientSession()
-
-                # Non-blocking poll with fast timeout
-                async with self.session.get(f"{self.bridge_url}/account_info", timeout=0.5) as res:
-                    if res.status == 200:
-                        data = await res.json()
+                # 2. Direct API Call (Microsecond latency)
+                # We assume the first bot determines the symbol for now
+                bots = list(self.bot_manager.bots.values())
+                if bots:
+                    symbol = bots[0].config.get('symbol', symbol)
+                    
+                    # Ensure symbol is selected
+                    mt5.symbol_select(symbol, True)
+                    
+                    # Get Tick
+                    tick = mt5.symbol_info_tick(symbol)
+                    
+                    if tick:
+                        # Get Positions Count (Direct)
+                        positions = mt5.positions_get(symbol=symbol)
+                        pos_count = len(positions) if positions else 0
                         
-                        price = data.get('current_price', 0)
-                        positions_count = data.get('positions_count', 0)
+                        tick_data = {
+                            'ask': tick.ask, 
+                            'bid': tick.bid,
+                            'positions_count': pos_count,
+                            'point': mt5.symbol_info(symbol).point
+                        }
                         
-                        if price > 0:
-                            tick_data = {
-                                'ask': price, 
-                                'bid': price,
-                                'positions_count': positions_count 
-                            }
-                            
-                            # Push to bots immediately
-                            active_bots = [b for b in self.bot_manager.bots.values() if b.running]
-                            if active_bots:
-                                await asyncio.gather(
-                                    *[bot.on_external_tick(tick_data) for bot in active_bots]
-                                )
-                                    
-            except Exception:
-                # Silently ignore dropped frames to maintain high Hz
-                pass
-            
-            # OVERCLOCK: Run as fast as CPU/Network allows
-            await asyncio.sleep(0.001)
+                        # 3. Fire Strategy Logic (Async)
+                        await asyncio.gather(
+                            *[bot.on_external_tick(tick_data) for bot in bots]
+                        )
+                        
+            except Exception as e:
+                print(f"Engine Loop Error: {e}")
+                
+            # 4. Yield control (Zero Sleep for Max Speed)
+            await asyncio.sleep(0)
 
     async def stop(self):
         self.running = False
-        if self.session:
-            await self.session.close()
+        mt5.shutdown()
+        print("🛑 MT5 Disconnected.")
