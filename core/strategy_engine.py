@@ -19,9 +19,9 @@ class GridStrategy:
         self.virtual_buy_trigger = None  
         self.virtual_sell_trigger = None 
         
-        # --- State Memory ---
-        # Tracks which level is currently being WATCHED (Top/Center/Bottom)
-        self.last_target_source = None 
+        # --- State Memory (The Fix for 18-pip Gap) ---
+        self.buy_trigger_name = None   # "top" or "center"
+        self.sell_trigger_name = None  # "bottom" or "center"
         
         # --- General State ---
         self.current_step = 0
@@ -32,6 +32,7 @@ class GridStrategy:
         # --- Lifecycle ---
         self.start_time = 0
         self.last_pos_count = 0
+        self.open_positions = 0 # UI Attribute
         self.is_resetting = False 
         self.reset_timestamp = 0
         self.iteration = 1
@@ -80,7 +81,8 @@ class GridStrategy:
         
         self.virtual_buy_trigger = None
         self.virtual_sell_trigger = None
-        self.last_target_source = None
+        self.buy_trigger_name = None
+        self.sell_trigger_name = None
         
         self.current_step = 0
         self.is_resetting = False
@@ -93,10 +95,11 @@ class GridStrategy:
         bid = float(tick_data['bid'])
         self.current_price = ask 
         current_pos_count = tick_data.get('positions_count', 0)
+        self.open_positions = current_pos_count
         
         # 1. CRITICAL: Check for SL/TP (Nuclear Reset) INSTANTLY
         if current_pos_count < self.last_pos_count and not self.is_resetting and self.current_step > 0:
-            print(f"🚨 POSITIONS DROPPED. NUCLEAR RESET TRIGGERED!")
+            print(f"🚨 POSITIONS DROPPED ({self.last_pos_count} -> {current_pos_count}). NUCLEAR RESET.")
             self.trigger_nuclear_reset()
             self.last_pos_count = current_pos_count
             return
@@ -132,17 +135,14 @@ class GridStrategy:
         if self.is_time_up():
             return
 
-        # 5. SNIPER LOGIC
+        # 5. SNIPER LOGIC (Using State Names)
         if self.virtual_buy_trigger and ask >= self.virtual_buy_trigger:
-            print(f"⚡ SNIPER: Buy Hit {self.virtual_buy_trigger}")
-            # Source must be passed deterministically
-            source = "top" if self.virtual_buy_trigger == self.anchor_top else "center"
-            await self.execute_market_order("buy", ask, source)
+            print(f"⚡ SNIPER: Buy Hit {self.virtual_buy_trigger} (Source: {self.buy_trigger_name})")
+            await self.execute_market_order("buy", ask)
             
         elif self.virtual_sell_trigger and bid <= self.virtual_sell_trigger:
-            print(f"⚡ SNIPER: Sell Hit {self.virtual_sell_trigger}")
-            source = "bottom" if self.virtual_sell_trigger == self.anchor_bottom else "center"
-            await self.execute_market_order("sell", bid, source)
+            print(f"⚡ SNIPER: Sell Hit {self.virtual_sell_trigger} (Source: {self.sell_trigger_name})")
+            await self.execute_market_order("sell", bid)
 
     def trigger_nuclear_reset(self):
         self.is_resetting = True
@@ -164,14 +164,16 @@ class GridStrategy:
         
         # Initial State: Watch Top and Bottom
         self.virtual_buy_trigger = self.anchor_top
-        self.virtual_sell_trigger = self.anchor_bottom
-        self.last_target_source = "start" # Mark the initial dual watch state
+        self.buy_trigger_name = "top"
         
-        print(f"⚓ ANCHOR: {self.anchor_center} | Spread: {spread} | Full Distance: {self.anchor_top - self.anchor_bottom}")
+        self.virtual_sell_trigger = self.anchor_bottom
+        self.sell_trigger_name = "bottom"
+        
+        print(f"⚓ ANCHOR: {self.anchor_center} | Top: {self.anchor_top} | Bot: {self.anchor_bottom}")
 
-    async def execute_market_order(self, direction, price, source):
+    async def execute_market_order(self, direction, price):
         vol = self.get_volume(self.current_step)
-        print(f"🚀 FIRING {direction.upper()} | Source: {source} | Lot: {vol}")
+        print(f"🚀 FIRING {direction.upper()} | Step {self.current_step} | Lot: {vol}")
         
         success = await self.send_market_request(direction, price, vol)
         if not success:
@@ -180,51 +182,38 @@ class GridStrategy:
 
         self.current_step += 1
         
-        # --- DETERMINISTIC PING PONG TRANSITION (FIXES 22 PIP GAP) ---
+        # --- DETERMINISTIC PING PONG TRANSITION (FIXED) ---
+        # We rely on the *Names*, not the math.
         
         if direction == "buy":
             self.virtual_buy_trigger = None # Lock Buy
             
-            if source == "top":
-                # Buy @ Top -> Next Target: Sell @ Center (10 pips away)
+            if self.buy_trigger_name == "top":
+                # Buy @ Top -> Next Target: Sell @ Center
                 self.virtual_sell_trigger = self.anchor_center
-                self.last_target_source = "center" 
+                self.sell_trigger_name = "center"
                 print(f"➡ Next Target: SELL @ Center ({self.anchor_center:.2f})")
                 
-            elif source == "center":
-                # Buy @ Center -> Next Target: Sell @ Bottom (10 pips away)
+            elif self.buy_trigger_name == "center":
+                # Buy @ Center -> Next Target: Sell @ Bottom
                 self.virtual_sell_trigger = self.anchor_bottom
-                self.last_target_source = "bottom" 
+                self.sell_trigger_name = "bottom"
                 print(f"➡ Next Target: SELL @ Bottom ({self.anchor_bottom:.2f})")
 
         elif direction == "sell":
             self.virtual_sell_trigger = None # Lock Sell
             
-            if source == "bottom":
-                # Sell @ Bottom -> Next Target: Buy @ Center (10 pips away)
+            if self.sell_trigger_name == "bottom":
+                # Sell @ Bottom -> Next Target: Buy @ Center
                 self.virtual_buy_trigger = self.anchor_center
-                self.last_target_source = "center"
+                self.buy_trigger_name = "center"
                 print(f"➡ Next Target: BUY @ Center ({self.anchor_center:.2f})")
                 
-            elif source == "center":
-                # Sell @ Center -> Next Target: Buy @ Top (10 pips away)
+            elif self.sell_trigger_name == "center":
+                # Sell @ Center -> Next Target: Buy @ Top
                 self.virtual_buy_trigger = self.anchor_top
-                self.last_target_source = "top"
+                self.buy_trigger_name = "top"
                 print(f"➡ Next Target: BUY @ Top ({self.anchor_top:.2f})")
-
-    async def run_logic_loop(self):
-        while self.running:
-            try:
-                # We do not call check_sl_tp here to avoid race conditions. 
-                # It is called on every tick (on_external_tick).
-                pass
-            except: pass
-            await asyncio.sleep(0.5)
-
-    async def check_sl_tp(self):
-        # NOTE: This function is now DEPRECATED as the logic moved to on_external_tick.
-        # It remains for context.
-        pass
 
     async def send_market_request(self, direction, price, volume):
         if "buy" in direction:
