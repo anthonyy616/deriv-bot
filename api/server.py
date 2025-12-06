@@ -31,7 +31,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Simple In-Memory Cache for Auth (60 seconds)
 # Format: {token: (user_id, expiry_timestamp)}
-auth_cache = TTLCache(maxsize=100, ttl=60)
+auth_cache = TTLCache(maxsize=100, ttl=3600)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
