@@ -1,5 +1,5 @@
 import asyncio
-import aiohttp # CHANGED: Use async library
+import aiohttp
 import os
 from dotenv import load_dotenv
 
@@ -10,43 +10,38 @@ class TradingEngine:
         self.bot_manager = bot_manager
         self.running = True
         self.bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
-        # Reuse session for performance
         self.session = None
 
     async def start(self):
-        print("⚙️ Engine: Bridge Poll Loop Active (Async Mode).")
-        # Create persistent session
-        self.session = aiohttp.ClientSession()
+        print("⚙️ Engine: High-Speed Poll Loop Active.")
+        # Persistent Session for Speed
+        self.session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=100))
         await self.run_tick_loop()
 
     async def run_tick_loop(self):
         while self.running:
             try:
-                if not self.session:
+                if self.session.closed:
                     self.session = aiohttp.ClientSession()
 
-                # 1. Non-blocking Poll to Bridge
-                async with self.session.get(f"{self.bridge_url}/account_info", timeout=2) as res:
+                # 1. Non-blocking Poll
+                # We use a short timeout to fail fast if bridge is busy
+                async with self.session.get(f"{self.bridge_url}/account_info", timeout=0.5) as res:
                     if res.status == 200:
                         data = await res.json()
-                        price = data.get('current_price', 0)
-                        point = data.get('point', 0.001)
-                        if point == 0: point = 0.001
                         
-                        # Capture positions for UI/Strategy
+                        price = data.get('current_price', 0)
                         positions_count = data.get('positions_count', 0)
-
+                        
                         if price > 0:
-                            # Construct tick data
+                            # Construct lightweight tick data
                             tick_data = {
-                                'symbol': data.get('symbol', 'FX Vol 20'),
                                 'ask': price, 
-                                'bid': price, 
-                                'point': point,
+                                'bid': price,
                                 'positions_count': positions_count 
                             }
                             
-                            # 2. Push tick to all ACTIVE bots (Async)
+                            # 2. Push to bots (Fire and Forget logic for speed)
                             active_bots = [b for b in self.bot_manager.bots.values() if b.running]
                             
                             if active_bots:
@@ -54,16 +49,15 @@ class TradingEngine:
                                     *[bot.on_external_tick(tick_data) for bot in active_bots]
                                 )
                                     
-            except Exception as e:
-                # Log error but don't crash
-                # print(f"Engine Polling Error: {e}") 
+            except Exception:
+                # Silently ignore connection blips to keep loop tight
                 pass
             
-            # 3. Poll Frequency (100ms)
-            await asyncio.sleep(0.1)
+            # 3. OVERCLOCK: Sleep only 1ms (basically 0)
+            # This allows the loop to run 100+ times per second if needed
+            await asyncio.sleep(0.001)
 
     async def stop(self):
         self.running = False
         if self.session:
             await self.session.close()
-            self.session = None
