@@ -10,7 +10,7 @@ from supabase import create_client, Client
 import asyncio
 import os
 from dotenv import load_dotenv
-from cachetools import TTLCache # You might need to pip install cachetools or use a simple dict
+from cachetools import TTLCache 
 
 load_dotenv()
 
@@ -24,23 +24,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 1. Initialize Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Simple In-Memory Cache for Auth (60 seconds)
-# Format: {token: (user_id, expiry_timestamp)}
-auth_cache = TTLCache(maxsize=100, ttl=3600)
+# Auth Cache (60 seconds)
+auth_cache = TTLCache(maxsize=100, ttl=60)
 
-# Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# 2. Initialize Core Systems
 bot_manager = BotManager()
 trading_engine = TradingEngine(bot_manager)
 
-# 3. Start the Engine Loop on Server Startup
 @app.on_event("startup")
 async def startup_event():
     print("🚀 Server Starting: Launching High-Speed Engine...")
@@ -58,20 +53,16 @@ class ConfigUpdate(BaseModel):
     max_runtime_minutes: int | None = None
     max_drawdown_usd: float | None = None
 
-# --- Helper: Non-Blocking Auth ---
+# Threaded Auth Helper
 def verify_supabase_token(token):
-    # Check Cache first
-    if token in auth_cache:
-        return auth_cache[token]
+    if token in auth_cache: return auth_cache[token]
     
-    # Blocking Call (Run in Thread)
     user_data = supabase.auth.get_user(token)
     if user_data and user_data.user:
         auth_cache[token] = user_data
         return user_data
     return None
 
-# --- Dependency: Verify Supabase Token & Get Bot ---
 async def get_current_bot(request: Request):
     auth_header = request.headers.get('Authorization')
     if not auth_header or not auth_header.startswith("Bearer "):
@@ -80,17 +71,15 @@ async def get_current_bot(request: Request):
     token = auth_header.split(" ")[1]
     
     try:
-        # CRITICAL FIX: Run blocking Auth in a separate thread
+        # Run auth in thread to prevent blocking
         user_data = await asyncio.to_thread(verify_supabase_token, token)
         
         if not user_data or not user_data.user:
              raise HTTPException(status_code=401, detail="Invalid Token")
 
-        user_id = user_data.user.id
-        return await bot_manager.get_or_create_bot(user_id)
+        return await bot_manager.get_or_create_bot(user_data.user.id)
         
     except Exception as e:
-        # Trap the "Session from session_id" error to prevent log spam
         err_str = str(e)
         if "session_id" in err_str or "403" in err_str:
              raise HTTPException(status_code=401, detail="Session Expired")
@@ -113,12 +102,9 @@ async def get_config(bot = Depends(get_current_bot)):
 async def update_config(config: ConfigUpdate, bot = Depends(get_current_bot)):
     old_symbol = bot.config.get('symbol')
     new_config = {k: v for k, v in config.model_dump().items() if v is not None}
-    
     updated = bot.config_manager.update_config(new_config)
-    
     if config.symbol and config.symbol != old_symbol:
         await bot.start_ticker()
-        
     return updated
 
 @app.post("/control/start")

@@ -14,8 +14,8 @@ class TradingEngine:
 
     async def start(self):
         print("⚙️ Engine: High-Speed Poll Loop Active.")
-        # Persistent Session for Speed
-        self.session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(limit=100))
+        # Persistent Session prevents TCP handshake overhead on every tick
+        self.session = aiohttp.ClientSession()
         await self.run_tick_loop()
 
     async def run_tick_loop(self):
@@ -24,8 +24,7 @@ class TradingEngine:
                 if self.session.closed:
                     self.session = aiohttp.ClientSession()
 
-                # 1. Non-blocking Poll
-                # We use a short timeout to fail fast if bridge is busy
+                # Non-blocking poll with fast timeout
                 async with self.session.get(f"{self.bridge_url}/account_info", timeout=0.5) as res:
                     if res.status == 200:
                         data = await res.json()
@@ -34,27 +33,24 @@ class TradingEngine:
                         positions_count = data.get('positions_count', 0)
                         
                         if price > 0:
-                            # Construct lightweight tick data
                             tick_data = {
                                 'ask': price, 
                                 'bid': price,
                                 'positions_count': positions_count 
                             }
                             
-                            # 2. Push to bots (Fire and Forget logic for speed)
+                            # Push to bots immediately
                             active_bots = [b for b in self.bot_manager.bots.values() if b.running]
-                            
                             if active_bots:
                                 await asyncio.gather(
                                     *[bot.on_external_tick(tick_data) for bot in active_bots]
                                 )
                                     
             except Exception:
-                # Silently ignore connection blips to keep loop tight
+                # Silently ignore dropped frames to maintain high Hz
                 pass
             
-            # 3. OVERCLOCK: Sleep only 1ms (basically 0)
-            # This allows the loop to run 100+ times per second if needed
+            # OVERCLOCK: Run as fast as CPU/Network allows
             await asyncio.sleep(0.001)
 
     async def stop(self):

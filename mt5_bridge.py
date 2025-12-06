@@ -1,5 +1,4 @@
 import MetaTrader5 as mt5
-import asyncio
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -51,95 +50,64 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MT5 Bridge", lifespan=lifespan)
 
-# --- HELPER: Strict Precision Enforcement ---
 def normalize_price(price, tick_size):
-    """
-    Rounds price to the nearest tick and converts to FLOAT via STRING.
-    This prevents floating point artifacts.
-    """
+    """Rounds price to the nearest tick."""
     if tick_size == 0: return price
-    
     rounded_price = round(price / tick_size) * tick_size
-    
     decimal_places = 0
     if "." in str(tick_size):
         decimal_places = len(str(tick_size).split(".")[1].rstrip("0"))
-        
     formatted_price = f"{rounded_price:.{decimal_places}f}"
     return float(formatted_price)
 
+# CRITICAL: Removed 'async' to force ThreadPool execution for blocking MT5 calls
 @app.post("/execute_signal")
-async def execute_trade(signal: TradeSignal):
+def execute_trade(signal: TradeSignal):
     try:
         if not mt5.terminal_info(): raise HTTPException(500, "MT5 Disconnected")
 
         symbol_info = mt5.symbol_info(signal.symbol)
         if not symbol_info: raise HTTPException(400, "Symbol not found")
 
-        # Metadata
         tick_size = symbol_info.trade_tick_size
         point = symbol_info.point
-        digits = symbol_info.digits
         
-        # --- CRITICAL: BROKER STOPS LEVEL ---
-        # Convert broker's minimum stops level (in POINTS) to a price value
+        # Calculate Min Distance
         min_stop_distance_price = symbol_info.trade_stops_level * point
-        # Add a small buffer (e.g., 5 points = 5 * point) for extra safety
         safety_buffer_price = 5 * point
         min_allowed_distance = min_stop_distance_price + safety_buffer_price
         
-        # Order Type
         action_map = {
             "buy": mt5.ORDER_TYPE_BUY, "sell": mt5.ORDER_TYPE_SELL,
             "buy_stop": mt5.ORDER_TYPE_BUY_STOP, "sell_stop": mt5.ORDER_TYPE_SELL_STOP
         }
         order_type = action_map.get(signal.action.lower())
-        if order_type is None: raise HTTPException(400, "Invalid action")
-
-        # --- LIVE MARKET DATA CHECK ---
-        tick = mt5.symbol_info_tick(signal.symbol)
-        if not tick: raise HTTPException(500, "No tick data")
-
-        # 1. Determine Raw Price & Normalize (For Market Orders, this is just the current price)
+        
+        # Get Price
         if "stop" in signal.action.lower():
             raw_price = signal.price
             trade_action = mt5.TRADE_ACTION_PENDING
         else:
+            tick = mt5.symbol_info_tick(signal.symbol)
             raw_price = tick.ask if signal.action.lower() == "buy" else tick.bid
             trade_action = mt5.TRADE_ACTION_DEAL
 
-        # Apply normalization to price
         price = normalize_price(raw_price, tick_size)
 
-
-        # 2. SL/TP Dynamic Clamping
-        # Clamping logic: ONLY USE USER'S INPUT IF IT IS > BROKER'S MINIMUM
-        
-        # SL CLAMPING
+        # SL/TP Clamping
         if signal.sl_points > 0:
             final_sl_distance = max(signal.sl_points, min_allowed_distance)
-            if "buy" in signal.action.lower():
-                sl = price - final_sl_distance
-            else:
-                sl = price + final_sl_distance
-        else:
-            sl = 0.0
+            sl = price - final_sl_distance if "buy" in signal.action.lower() else price + final_sl_distance
+        else: sl = 0.0
             
-        # TP CLAMPING
         if signal.tp_points > 0:
             final_tp_distance = max(signal.tp_points, min_allowed_distance)
-            if "buy" in signal.action.lower():
-                tp = price + final_tp_distance
-            else:
-                tp = price - final_tp_distance
-        else:
-            tp = 0.0
+            tp = price + final_tp_distance if "buy" in signal.action.lower() else price - final_tp_distance
+        else: tp = 0.0
 
-        # Normalize final SL/TP prices
         sl = normalize_price(sl, tick_size) if sl != 0.0 else 0.0
         tp = normalize_price(tp, tick_size) if tp != 0.0 else 0.0
 
-        # 3. Build Request
         request = {
             "action": trade_action,
             "symbol": signal.symbol,
@@ -152,10 +120,9 @@ async def execute_trade(signal: TradeSignal):
             "magic": int(signal.magic),
             "comment": str(signal.comment),
             "type_time": mt5.ORDER_TIME_GTC,
-            # Removed type_filling to restore "old commit" behavior
         }
 
-        print(f"📡 Sending: {signal.action} @ {price} | SL: {sl} | TP: {tp} | Min Stop: {min_allowed_distance:.5f}")
+        print(f"📡 Sending: {signal.action} @ {price} | SL: {sl} | TP: {tp}")
         result = mt5.order_send(request)
         
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
@@ -170,8 +137,6 @@ async def execute_trade(signal: TradeSignal):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-# ... (Keep existing cancel_orders, close_all, account_info, recent_deals functions unchanged) ...
-
 @app.post("/cancel_orders")
 def cancel_pending_orders():
     if not mt5.terminal_info(): return {"error": "Disconnected"}
@@ -179,13 +144,9 @@ def cancel_pending_orders():
     count = 0
     if orders:
         for order in orders:
-            req = {
-                "action": mt5.TRADE_ACTION_REMOVE,
-                "order": order.ticket,
-                "symbol": SYMBOL
-            }
-            res = mt5.order_send(req)
-            if res.retcode == mt5.TRADE_RETCODE_DONE: count += 1
+            req = {"action": mt5.TRADE_ACTION_REMOVE, "order": order.ticket}
+            mt5.order_send(req)
+            count += 1
     return {"canceled": count}
 
 @app.post("/close_all")
@@ -202,15 +163,14 @@ def close_all_positions():
             req = {
                 "action": mt5.TRADE_ACTION_DEAL,
                 "symbol": pos.symbol,
+                "position": pos.ticket,
                 "volume": pos.volume,
                 "type": type_op,
-                "position": pos.ticket,
                 "price": price,
-                "deviation": 50,
-                "comment": "Reset",
+                "deviation": 50
             }
-            res = mt5.order_send(req)
-            if res.retcode == mt5.TRADE_RETCODE_DONE: count += 1
+            mt5.order_send(req)
+            count += 1
     return {"closed": count}
 
 @app.get("/account_info")
@@ -236,7 +196,7 @@ def get_recent_deals(seconds: int = 60):
     from datetime import datetime, timedelta
     d = mt5.history_deals_get(datetime.now() - timedelta(seconds=seconds), datetime.now())
     if not d: return []
-    return [{"ticket": x.ticket, "type": x.type, "profit": x.profit, "symbol": x.symbol} for x in d if x.symbol == SYMBOL]
+    return [{"ticket": x.ticket, "type": x.type, "profit": x.profit, "entry": x.entry} for x in d if x.symbol == SYMBOL]
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=BRIDGE_PORT)
