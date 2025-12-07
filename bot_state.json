@@ -1,1 +1,1 @@
-{"symbol": "FX Vol 20", "anchor_center_ask": 114658.17, "anchor_center_bid": 114654.09, "anchor_top_ask": 114664.09, "anchor_bottom_bid": 114648.17, "buy_trigger_name": null, "sell_trigger_name": "bottom", "current_step": 2, "iteration": 13}
+{"symbol": "FX Vol 20", "anchor_center_ask": 114393.2, "anchor_center_bid": 114389.13, "anchor_top_ask": 114404.13, "anchor_bottom_bid": 114378.2, "buy_trigger_name": "top", "sell_trigger_name": "bottom", "current_step": 0, "iteration": 26}
