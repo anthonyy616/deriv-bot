@@ -25,6 +25,9 @@ class GridStrategy:
         self.is_resetting = False 
         self.reset_timestamp = 0
         
+        # --- Race Condition Lock ---
+        self.is_busy = False # <--- CRITICAL FIX
+        
         # --- UI Data ---
         self.current_price = 0.0
         self.open_positions = 0 
@@ -102,6 +105,7 @@ class GridStrategy:
         self.sell_trigger_name = None
         self.current_step = 0
         self.is_resetting = False
+        self.is_busy = False # Reset lock
         self.save_state()
         print(f"🔄 Cycle Reset: Waiting for new Anchor (Iteration {self.iteration})...")
 
@@ -146,32 +150,47 @@ class GridStrategy:
             self.init_immutable_grid(ask)
             return
 
-        # 4. Check Limits
+        # 4. Check Limits & Locks
         max_pos = int(self.config.get('max_positions', 5))
+        
+        # STOP if full, time up, or BUSY
         if self.current_step >= max_pos: return 
         if self.is_time_up(): return
+        if self.is_busy: return # <--- Race Condition Check
 
         # 5. SNIPER LOGIC (Direct Execution)
-        # Using ANCHORS directly - No virtual variables needed, just logic
-        # Buy Trigger is Top or Center? Depends on state.
         
         if self.buy_trigger_name == "top":
             if ask >= self.anchor_top:
                 print(f"⚡ SNIPER: Hit Top Anchor {self.anchor_top}")
+                self.is_busy = True # Lock
                 self.execute_market_order("buy", ask)
+                self.is_busy = False # Unlock
+                return
+                
         elif self.buy_trigger_name == "center":
             if ask >= self.anchor_center:
                 print(f"⚡ SNIPER: Hit Center Anchor {self.anchor_center}")
+                self.is_busy = True # Lock
                 self.execute_market_order("buy", ask)
+                self.is_busy = False # Unlock
+                return
 
         if self.sell_trigger_name == "bottom":
             if bid <= self.anchor_bottom:
                 print(f"⚡ SNIPER: Hit Bottom Anchor {self.anchor_bottom}")
+                self.is_busy = True # Lock
                 self.execute_market_order("sell", bid)
+                self.is_busy = False # Unlock
+                return
+                
         elif self.sell_trigger_name == "center":
             if bid <= self.anchor_center:
                 print(f"⚡ SNIPER: Hit Center Anchor {self.anchor_center}")
+                self.is_busy = True # Lock
                 self.execute_market_order("sell", bid)
+                self.is_busy = False # Unlock
+                return
 
     def is_time_up(self):
         max_mins = int(self.config.get('max_runtime_minutes', 0))
