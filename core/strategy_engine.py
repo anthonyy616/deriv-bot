@@ -26,13 +26,18 @@ class GridStrategy:
         self.reset_timestamp = 0
         
         # --- Race Condition Lock ---
-        self.is_busy = False # <--- CRITICAL FIX
+        self.is_busy = False 
         
         # --- UI Data ---
         self.current_price = 0.0
         self.open_positions = 0 
         self.start_time = 0
         self.last_pos_count = 0
+        
+        # --- SLIPPAGE CONTROL ---
+        # Maximum allowed distance (in price units) from the trigger level.
+        # Example: If trigger is 100.00 and max_slip is 1.0, we won't buy above 101.00.
+        self.max_slippage = 2.0 
         
         # Load previous state if exists
         self.load_state()
@@ -51,14 +56,14 @@ class GridStrategy:
         self.running = True
         self.start_time = time.time()
         
-        # Clear legacy orders on startup
         self.cancel_all_orders_direct()
         
-        # If we have no open positions, reset state
-        if self.get_real_positions_count() == 0:
+        real_positions = self.get_real_positions_count()
+        if real_positions == 0:
             self.reset_cycle()
         else:
-            print("⚠️ Resuming existing cycle from state...")
+            print(f"⚠️ Resuming existing cycle ({real_positions} positions)...")
+            self.last_pos_count = real_positions
 
         print(f"✅ Monolith Strategy Started: {self.symbol}")
 
@@ -67,7 +72,6 @@ class GridStrategy:
         self.save_state()
 
     def get_real_positions_count(self):
-        # Direct MT5 check
         positions = mt5.positions_get(symbol=self.symbol)
         return len(positions) if positions else 0
 
@@ -105,7 +109,7 @@ class GridStrategy:
         self.sell_trigger_name = None
         self.current_step = 0
         self.is_resetting = False
-        self.is_busy = False # Reset lock
+        self.is_busy = False
         self.save_state()
         print(f"🔄 Cycle Reset: Waiting for new Anchor (Iteration {self.iteration})...")
 
@@ -117,7 +121,7 @@ class GridStrategy:
         self.current_price = ask 
         self.open_positions = tick_data.get('positions_count', 0)
         
-        # 1. NUCLEAR RESET (Fast Path)
+        # 1. NUCLEAR RESET
         if self.open_positions < self.last_pos_count and not self.is_resetting and self.current_step > 0:
             print(f"🚨 POSITION DROP ({self.last_pos_count} -> {self.open_positions}). NUCLEAR RESET.")
             self.close_all_direct()
@@ -128,7 +132,7 @@ class GridStrategy:
 
         self.last_pos_count = self.open_positions
 
-        # 2. Reset State Handler
+        # 2. Reset Handler
         if self.is_resetting:
             if self.open_positions == 0:
                 if self.is_time_up():
@@ -139,58 +143,51 @@ class GridStrategy:
                 self.iteration += 1
                 self.reset_cycle()
             else:
-                # Retry close every 2s
                 if time.time() - self.reset_timestamp > 2:
                     self.close_all_direct()
                     self.reset_timestamp = time.time()
             return
 
-        # 3. Initialize Grid
+        # 3. Initialize
         if self.anchor_center is None:
             self.init_immutable_grid(ask)
             return
 
-        # 4. Check Limits & Locks
+        # 4. Limits & Locks
         max_pos = int(self.config.get('max_positions', 5))
-        
-        # STOP if full, time up, or BUSY
         if self.current_step >= max_pos: return 
         if self.is_time_up(): return
-        if self.is_busy: return # <--- Race Condition Check
+        if self.is_busy: return 
 
-        # 5. SNIPER LOGIC (Direct Execution)
+        # 5. SNIPER LOGIC (With Price Banding)
         
         if self.buy_trigger_name == "top":
-            if ask >= self.anchor_top:
-                print(f"⚡ SNIPER: Hit Top Anchor {self.anchor_top}")
-                self.is_busy = True # Lock
+            # Rule: Ask must be >= Trigger AND Ask <= Trigger + Max_Slippage
+            if self.anchor_top <= ask <= (self.anchor_top + self.max_slippage):
+                print(f"⚡ SNIPER: Top Hit {ask} (Good Entry)")
                 self.execute_market_order("buy", ask)
-                self.is_busy = False # Unlock
-                return
+            elif ask > (self.anchor_top + self.max_slippage):
+                # Price is too high (Wild Spike), wait for it to settle
+                pass 
                 
         elif self.buy_trigger_name == "center":
-            if ask >= self.anchor_center:
-                print(f"⚡ SNIPER: Hit Center Anchor {self.anchor_center}")
-                self.is_busy = True # Lock
+            if self.anchor_center <= ask <= (self.anchor_center + self.max_slippage):
+                print(f"⚡ SNIPER: Center Hit {ask} (Good Entry)")
                 self.execute_market_order("buy", ask)
-                self.is_busy = False # Unlock
-                return
 
         if self.sell_trigger_name == "bottom":
-            if bid <= self.anchor_bottom:
-                print(f"⚡ SNIPER: Hit Bottom Anchor {self.anchor_bottom}")
-                self.is_busy = True # Lock
+            # Rule: Bid must be <= Trigger AND Bid >= Trigger - Max_Slippage
+            if (self.anchor_bottom - self.max_slippage) <= bid <= self.anchor_bottom:
+                print(f"⚡ SNIPER: Bottom Hit {bid} (Good Entry)")
                 self.execute_market_order("sell", bid)
-                self.is_busy = False # Unlock
-                return
+            elif bid < (self.anchor_bottom - self.max_slippage):
+                # Price crashed too low, wait
+                pass
                 
         elif self.sell_trigger_name == "center":
-            if bid <= self.anchor_center:
-                print(f"⚡ SNIPER: Hit Center Anchor {self.anchor_center}")
-                self.is_busy = True # Lock
+            if (self.anchor_center - self.max_slippage) <= bid <= self.anchor_center:
+                print(f"⚡ SNIPER: Center Hit {bid} (Good Entry)")
                 self.execute_market_order("sell", bid)
-                self.is_busy = False # Unlock
-                return
 
     def is_time_up(self):
         max_mins = int(self.config.get('max_runtime_minutes', 0))
@@ -199,65 +196,57 @@ class GridStrategy:
 
     def init_immutable_grid(self, price):
         raw_spread = float(self.config.get('spread', 6.0))
-        # Total Width = Spread. So Half Width = Spread / 2
-        half_spread = raw_spread / 2.0
-        
         self.anchor_center = price
-        self.anchor_top = price + half_spread
-        self.anchor_bottom = price - half_spread
+        self.anchor_top = price + raw_spread 
+        self.anchor_bottom = price - raw_spread 
         
-        # Initial State
         self.buy_trigger_name = "top"
         self.sell_trigger_name = "bottom"
         
-        print(f"⚓ ANCHOR: {self.anchor_center:.2f} | Width: {raw_spread}")
-        print(f"   Top: {self.anchor_top:.2f} | Bot: {self.anchor_bottom:.2f}")
+        print(f"⚓ ANCHOR: {self.anchor_center:.2f} | Spread: {raw_spread}")
         self.save_state()
 
     def execute_market_order(self, direction, price):
+        self.is_busy = True 
         vol = self.get_volume(self.current_step)
         print(f"🚀 FIRING {direction.upper()} | Step {self.current_step} | Lot: {vol}")
         
+        self.current_step += 1 
+        
         if self.send_market_request_direct(direction, vol):
-            self.current_step += 1
-            
-            # --- State Transition ---
+            # State Transition (Success)
             if direction == "buy":
-                # If we bought Top -> Next Sell is Center
-                # If we bought Center -> Next Sell is Bottom
                 if self.buy_trigger_name == "top":
                     self.sell_trigger_name = "center"
-                    self.buy_trigger_name = None # Disable Buy
+                    self.buy_trigger_name = None 
                 elif self.buy_trigger_name == "center":
                     self.sell_trigger_name = "bottom"
                     self.buy_trigger_name = None
-
             elif direction == "sell":
-                # If we sold Bottom -> Next Buy is Center
-                # If we sold Center -> Next Buy is Top
                 if self.sell_trigger_name == "bottom":
                     self.buy_trigger_name = "center"
                     self.sell_trigger_name = None
                 elif self.sell_trigger_name == "center":
                     self.buy_trigger_name = "top"
                     self.sell_trigger_name = None
-            
             self.save_state()
+        else:
+            print("❌ Order Failed. Rolling back.")
+            self.current_step -= 1
+            
+        self.is_busy = False
 
     def send_market_request_direct(self, direction, volume):
-        # Calculate SL/TP using Clamping (Direct MT5)
         symbol_info = mt5.symbol_info(self.symbol)
         if not symbol_info: return False
         
         point = symbol_info.point
         min_dist = (symbol_info.trade_stops_level * point) + (5 * point)
         
-        # Get Current Price for Entry
         tick = mt5.symbol_info_tick(self.symbol)
         price = tick.ask if direction == "buy" else tick.bid
         type_op = mt5.ORDER_TYPE_BUY if direction == "buy" else mt5.ORDER_TYPE_SELL
         
-        # Logic for SL/TP
         sl_cfg = float(self.config.get(f'{direction}_stop_sl', 0))
         tp_cfg = float(self.config.get(f'{direction}_stop_tp', 0))
         
@@ -282,7 +271,8 @@ class GridStrategy:
             "magic": self.iteration,
             "comment": f"S{self.current_step}",
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_FOK
+            "type_filling": mt5.ORDER_FILLING_FOK,
+            "deviation": 5 # <--- TIGHT DEVIATION (0.5 - 1 Pip limit)
         }
         
         res = mt5.order_send(req)
@@ -297,7 +287,6 @@ class GridStrategy:
         if step < len(step_lots): return step_lots[step]
         return step_lots[-1]
 
-    # --- STATE PERSISTENCE ---
     def save_state(self):
         state = {
             "anchor_center": self.anchor_center,
@@ -323,7 +312,6 @@ class GridStrategy:
                     self.sell_trigger_name = state.get("sell_trigger_name")
                     self.current_step = state.get("current_step", 0)
                     self.iteration = state.get("iteration", 1)
-                    print("💾 State Loaded.")
             except: pass
 
     def get_status(self):
