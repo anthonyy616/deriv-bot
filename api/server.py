@@ -57,10 +57,31 @@ class ConfigUpdate(BaseModel):
 def verify_supabase_token(token):
     if token in auth_cache: return auth_cache[token]
     
-    user_data = supabase.auth.get_user(token)
-    if user_data and user_data.user:
-        auth_cache[token] = user_data
-        return user_data
+    max_retries = 3
+    import time
+    
+    for attempt in range(max_retries):
+        try:
+            user_data = supabase.auth.get_user(token)
+            if user_data and user_data.user:
+                auth_cache[token] = user_data
+                return user_data
+            return None # Invalid user but no error
+            
+        except Exception as e:
+            # Check for connection errors (WinError 10054, etc)
+            err_str = str(e)
+            is_network_error = "10054" in err_str or "Connection" in err_str or "Timeout" in err_str
+            
+            if is_network_error and attempt < max_retries - 1:
+                print(f"⚠️ Auth Network Error (Attempt {attempt+1}/{max_retries}): {e}. Retrying...")
+                time.sleep(0.5)
+                continue
+            
+            # If it's the last attempt or not a network error, re-raise
+            if attempt == max_retries - 1:
+                raise e
+    
     return None
 
 async def get_current_bot(request: Request):
