@@ -301,6 +301,10 @@
                 <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Pending</div>
                 <div class="text-2xl font-bold mt-1"><span id="pending-count">0</span></div>
             </div>
+            <div class="bg-white dark:bg-slate-800 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+                <div class="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase">Bot State</div>
+                <div id="cycle-state" class="text-xl font-bold mt-1 text-blue-400">Idle</div>
+            </div>
         </div>
 
         <div class="grid md:grid-cols-3 gap-6">
@@ -312,20 +316,34 @@
                     <div class="grid grid-cols-2 gap-4">
                         <div>
                             <label class="block text-xs font-bold text-gray-500 mb-1">Index</label>
-                            <input type="text" id="symbol"
-                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-600 outline-none"
-                                value="FX Vol 20">
+                            <select id="symbol"
+                                class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-600 outline-none">
+                                <optgroup label="FX Indices">
+                                    <option value="FX Vol 20">FX Vol 20</option>
+                                    <option value="FX Vol 40">FX Vol 40</option>
+                                    <option value="FX Vol 60">FX Vol 60</option>
+                                    <option value="FX Vol 80">FX Vol 80</option>
+                                    <option value="FX Vol 99">FX Vol 99</option>
+                                </optgroup>
+                                <optgroup label="SFX Indices">
+                                    <option value="SFX Vol 20">SFX Vol 20</option>
+                                    <option value="SFX Vol 40">SFX Vol 40</option>
+                                    <option value="SFX Vol 60">SFX Vol 60</option>
+                                    <option value="SFX Vol 80">SFX Vol 80</option>
+                                    <option value="SFX Vol 99">SFX Vol 99</option>
+                                </optgroup>
+                            </select>
                         </div>
                         <div>
-                            <label class="block text-xs font-bold text-gray-500 mb-1">Spread</label>
-                            <input type="number" id="spread"
+                            <label class="block text-xs font-bold text-gray-500 mb-1">Spread (Pips)</label>
+                            <input type="number" id="spread" step="0.1"
                                 class="w-full p-2 text-sm rounded bg-slate-50 dark:bg-slate-900 border border-slate-600 outline-none"
-                                value="8">
+                                value="10">
                         </div>
                     </div>
 
                     <div class="p-3 border border-blue-500/30 rounded bg-blue-50/50 dark:bg-blue-900/10">
-                        <label class="block text-xs font-bold text-blue-500 mb-2">Buy Stop Settings</label>
+                        <label class="block text-xs font-bold text-blue-500 mb-2">Buy Settings</label>
                         <div class="grid grid-cols-2 gap-2">
                             <div>
                                 <label class="block text-[10px] text-gray-500 mb-0.5">TP (pips)</label>
@@ -337,13 +355,11 @@
                                 <input type="number" id="buy_stop_sl"
                                     class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
                             </div>
-                            <span class="text-[10px] text-gray-500 mb-0.5">Please note:
-                                Value here has to be above "10" for broker to accept your order</span>
                         </div>
                     </div>
 
                     <div class="p-3 border border-red-500/30 rounded bg-red-50/50 dark:bg-red-900/10">
-                        <label class="block text-xs font-bold text-red-500 mb-2">Sell Stop Settings</label>
+                        <label class="block text-xs font-bold text-red-500 mb-2">Sell Settings</label>
                         <div class="grid grid-cols-2 gap-2">
                             <div>
                                 <label class="block text-[10px] text-gray-500 mb-0.5">TP (pips)</label>
@@ -355,16 +371,16 @@
                                 <input type="number" id="sell_stop_sl"
                                     class="w-full p-1.5 text-sm rounded bg-slate-900 border border-slate-600">
                             </div>
-                            <span class="text-[10px] text-gray-500 mb-0.5">Please note:
-                                Value here has to be above "10" for broker to accept your order</span>
                         </div>
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-gray-500 mb-1">Max Positions</label>
+                        <label class="block text-xs font-bold text-gray-500 mb-1">Max Positions (Steps)</label>
                         <input type="number" id="max_positions"
                             class="w-full p-2 text-sm rounded bg-slate-900 border border-slate-600 mb-2" value="5"
                             max="20" onchange="renderLotInputs()">
+
+                        <label class="block text-[10px] text-gray-500 mb-1">Lot Sizes per Step:</label>
                         <div id="lots-container" class="grid grid-cols-4 gap-2"></div>
                     </div>
 
@@ -377,15 +393,17 @@
                     </div>
 
                     <button type="submit"
-                        class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium">Update
-                        Settings</button>
+                        class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition hover:shadow-lg">
+                        Update Configuration
+                    </button>
                 </form>
             </div>
 
             <div
                 class="md:col-span-2 bg-white dark:bg-slate-800 p-5 rounded-lg border border-slate-200 dark:border-slate-700 flex flex-col h-[600px]">
                 <h2 class="text-lg font-semibold mb-2">Live Terminal</h2>
-                <div id="logs" class="flex-1 bg-slate-950 rounded p-4 font-mono text-xs overflow-y-auto text-green-400">
+                <div id="logs"
+                    class="flex-1 bg-slate-950 rounded p-4 font-mono text-xs overflow-y-auto text-green-400 border border-slate-800">
                     <div>[System] Ready.</div>
                 </div>
             </div>
@@ -398,14 +416,14 @@
         let sessionToken = null;
         let lastRunningState = false;
 
-        // --- UI Helpers ---
+        // --- 1. UI State Helpers ---
         function setLoggedInState(session) {
             sessionToken = session.access_token;
             document.getElementById('login-modal').classList.add('hidden');
             document.getElementById('dashboard').classList.remove('hidden');
             const btn = document.getElementById('login-btn');
             if (btn) btn.innerHTML = 'Sign In / Register';
-            log("✅ Authenticated.");
+            log("✅ Authenticated with Supabase.");
             loadConfig();
             startPolling();
         }
@@ -417,16 +435,15 @@
             if (updateInterval) clearInterval(updateInterval);
         }
 
-        // --- API Helper ---
+        // --- 2. Robust API Client ---
         async function apiCall(endpoint, method = 'GET', body = null) {
-            // CRITICAL FIX: Fetch current session directly from Supabase
-            // This grabs the refreshed token if the old one expired
+            // Check session validity before every call to prevent 401 loops
             const { data } = await supabase.auth.getSession();
             const token = data.session?.access_token;
 
             if (!token) {
-                // Only logout if there is genuinely no session
-                console.warn("No active session found.");
+                console.warn("Session expired. Logging out.");
+                setLoggedOutState();
                 return null;
             }
 
@@ -440,28 +457,34 @@
 
             try {
                 const res = await fetch(endpoint, opts);
+
                 if (res.status === 401) {
-                    // Optional: Retry once here if you suspect race conditions
-                    logout();
+                    console.error("401 Unauthorized - Force Logout");
+                    supabase.auth.signOut();
+                    setLoggedOutState();
                     return null;
                 }
+
                 return res.json();
             } catch (e) {
-                console.error("API Error:", e);
+                console.error("API Connection Error:", e);
+                // Don't log out on network error, just return null
                 return null;
             }
         }
 
-        // --- 1. Initialize Supabase ---
+        // --- 3. Supabase Init ---
         async function initSupabase() {
             try {
                 const res = await fetch('/env');
                 const env = await res.json();
+
                 if (!env.SUPABASE_URL || !env.SUPABASE_KEY) {
-                    document.getElementById('login-error').textContent = "Server Error: Missing keys in .env";
+                    document.getElementById('login-error').textContent = "Server Error: Missing .env keys";
                     document.getElementById('login-error').classList.remove('hidden');
                     return;
                 }
+
                 supabase = window.supabase.createClient(env.SUPABASE_URL, env.SUPABASE_KEY, {
                     auth: {
                         persistSession: true,
@@ -469,8 +492,12 @@
                         detectSessionInUrl: true
                     }
                 });
+
+                // Auto-login check
                 const { data } = await supabase.auth.getSession();
                 if (data.session) setLoggedInState(data.session);
+
+                // Auth Listener
                 supabase.auth.onAuthStateChange((event, session) => {
                     if (session) setLoggedInState(session);
                     else setLoggedOutState();
@@ -478,7 +505,6 @@
             } catch (e) { console.error("Init Error", e); }
         }
 
-        // --- 2. Login Handler ---
         async function handleSupabaseLogin(e) {
             e.preventDefault();
             const email = document.getElementById('email').value;
@@ -490,32 +516,25 @@
             btn.innerHTML = '<div class="loader"></div>';
 
             try {
-                // Try Login
                 const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ email, password });
-                if (loginData.session) { setLoggedInState(loginData.session); return; }
+                if (loginData.session) return; // Listener handles the rest
 
-                // If Login fails, Try Registration
-                console.log("Login failed, attempting registration...");
+                // Fallback to Registration
                 const { data: signUpData, error: signUpError } = await supabase.auth.signUp({ email, password });
-
-                if (signUpData.session) {
-                    setLoggedInState(signUpData.session);
-                    return;
-                }
+                if (signUpData.session) return;
 
                 if (signUpError) throw signUpError;
                 if (loginError) throw loginError;
 
             } catch (e) {
                 console.error("Auth Error", e);
-                errBox.textContent = e.message || "Authentication failed. Please try again.";
+                errBox.textContent = e.message || "Authentication failed.";
                 errBox.classList.remove('hidden');
-            } finally {
                 btn.innerHTML = 'Sign In / Register';
             }
         }
 
-        // --- 3. Config Management ---
+        // --- 4. Config & Control ---
         async function loadConfig() {
             const cfg = await apiCall('/config');
             if (!cfg) return;
@@ -539,6 +558,7 @@
             e.preventDefault();
             const step_lots = [];
             const count = parseInt(document.getElementById('max_positions').value) || 0;
+
             for (let i = 0; i < count; i++) {
                 const val = parseFloat(document.getElementById(`lot_${i}`).value);
                 step_lots.push(isNaN(val) ? 0.01 : val);
@@ -558,33 +578,36 @@
 
             const updated = await apiCall('/config', 'POST', payload);
             if (updated) {
-                log("⚙️ Settings Updated");
+                log("⚙️ Config Updated. Strategy will re-anchor on next cycle.");
                 loadConfig();
             } else {
-                log("❌ Update Failed");
+                log("❌ Update Failed.");
             }
         }
 
-        // --- 4. Bot Control & Status ---
         async function toggleBot() {
             const btn = document.getElementById('toggle-btn');
             const action = btn.textContent.includes('Start') ? 'start' : 'stop';
-
-            if (action === 'start') log("⏳ Starting...");
-            else log("⏳ Stopping...");
-
             await apiCall(`/control/${action}`, 'POST');
             fetchStatus();
         }
 
         async function fetchStatus() {
+            if (!sessionToken) return;
             const status = await apiCall('/status');
             if (!status) return;
 
             document.getElementById('price-display').textContent = status.current_price ? status.current_price.toFixed(2) : '---';
+            // Use open_positions from backend (Source of Truth)
             document.getElementById('pos-count').textContent = status.open_positions || 0;
-            document.getElementById('pending-count').textContent = status.pending_orders || 0;
 
+            // Display internal state
+            const stateLabel = document.getElementById('cycle-state');
+            if (status.is_resetting) stateLabel.textContent = "♻️ Resetting...";
+            else if (status.running) stateLabel.textContent = `⚡ Active (Iteration ${status.iteration})`;
+            else stateLabel.textContent = "💤 Idle";
+
+            // Update Buttons
             const statusBadge = document.getElementById('status-badge');
             const toggleBtn = document.getElementById('toggle-btn');
 
@@ -593,13 +616,13 @@
                 statusBadge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-green-500/10 text-green-500 border border-green-500/20";
                 toggleBtn.textContent = "Stop Bot";
                 toggleBtn.className = "px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded";
-                if (!lastRunningState) log("🚀 Bot Started");
+                if (!lastRunningState) log(`🚀 Bot Running. Step ${status.step}`);
             } else {
                 statusBadge.innerHTML = '<div class="h-2 w-2 rounded-full bg-slate-400"></div> Offline';
                 statusBadge.className = "flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400";
                 toggleBtn.textContent = "Start Bot";
                 toggleBtn.className = "px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded";
-                if (lastRunningState) log("🛑 Bot Stopped");
+                if (lastRunningState) log("🛑 Bot Stopped.");
             }
             lastRunningState = status.running;
         }
@@ -610,7 +633,7 @@
             container.innerHTML = '';
             for (let i = 0; i < count; i++) {
                 const val = existing[i] !== undefined ? existing[i] : 0.01;
-                container.innerHTML += `<input type="number" id="lot_${i}" step="0.01" value="${val}" class="p-1 text-xs rounded bg-slate-900 border border-slate-600 text-center">`;
+                container.innerHTML += `<input type="number" id="lot_${i}" step="0.01" value="${val}" class="p-1 text-xs rounded bg-slate-900 border border-slate-600 text-center" placeholder="Step ${i + 1}">`;
             }
         }
 
@@ -618,9 +641,11 @@
         function startPolling() { if (updateInterval) clearInterval(updateInterval); updateInterval = setInterval(fetchStatus, 1000); }
         function log(msg) {
             const logs = document.getElementById('logs');
-            logs.innerHTML = `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>` + logs.innerHTML;
+            const time = new Date().toLocaleTimeString();
+            logs.innerHTML = `<div class="mb-1"><span class="text-slate-500">[${time}]</span> ${msg}</div>` + logs.innerHTML;
         }
 
+        // Start
         initSupabase();
         renderLotInputs();
     </script>
