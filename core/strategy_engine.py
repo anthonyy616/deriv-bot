@@ -3,27 +3,33 @@ import time
 import json
 import os
 import MetaTrader5 as mt5
+import aiohttp
 
 class GridStrategy:
     def __init__(self, config_manager):
         self.config_manager = config_manager
         self.symbol = config_manager.get_config().get('symbol', 'FX Vol 20')
         self.running = False
+        self.mt5_bridge_url = os.getenv("MT5_BRIDGE_URL", "http://localhost:8001")
         
+        # --- IMMUTABLE GRID ANCHORS ---
         self.anchor_center_bid = None 
         self.anchor_center_ask = None
         self.anchor_top_ask = None
         self.anchor_bottom_bid = None
         
+        # --- State Memory ---
         self.buy_trigger_name = None   
         self.sell_trigger_name = None  
         
+        # --- General State ---
         self.current_step = 0
         self.iteration = 1
         self.is_resetting = False 
         self.reset_timestamp = 0
         self.is_busy = False 
         
+        # --- UI Data ---
         self.current_price = 0.0
         self.open_positions = 0 
         self.start_time = 0
@@ -44,6 +50,7 @@ class GridStrategy:
 
     async def start(self):
         self.running = True
+        self.session = aiohttp.ClientSession()
         self.start_time = time.time()
         
         # Ensure symbol is selected
@@ -55,7 +62,7 @@ class GridStrategy:
         if self.get_real_positions_count() == 0:
             self.reset_cycle()
         else:
-            print("⚠️ Resuming existing cycle...")
+            print("⚠️ Resuming existing cycle from state...")
             self.last_pos_count = self.get_real_positions_count()
 
         print(f"✅ Strategy Started: {self.symbol}")
@@ -149,22 +156,41 @@ class GridStrategy:
                     self.reset_timestamp = time.time()
             return
 
-        # 3. Initialize
-        if self.anchor_center_bid is None:
+        # 3. Initialize Grid (Anchor)
+        if (self.anchor_center_ask is None or 
+            self.anchor_center_bid is None or 
+            self.anchor_top_ask is None or 
+            self.anchor_bottom_bid is None):
             self.init_immutable_grid(ask, bid)
             return
 
-        # 4. Checks
+        # 4. Check Limits
         max_pos = int(self.config.get('max_positions', 5))
         if self.current_step >= max_pos: return 
         if self.is_time_up(): return
         if self.is_busy: return 
 
+        # --- 4.5 RE-ANCHOR LOGIC (Runaway Price Catch) ---
+        # If we are stuck at Step 0 (First Trade) and price moved 3x spread away.
+        if self.current_step == 0:
+            user_spread = float(self.config.get('spread', 6.0))
+            dist_3x = user_spread * 3.0
+            
+            # Check Upper Runaway
+            if ask >= (self.anchor_center_ask + dist_3x):
+                print(f"🚀 Price Runaway Detected (UP). Re-Anchoring at {ask}")
+                self.init_immutable_grid(ask, bid)
+                return 
+
+            # Check Lower Runaway
+            elif bid <= (self.anchor_center_bid - dist_3x):
+                print(f"📉 Price Runaway Detected (DOWN). Re-Anchoring at {bid}")
+                self.init_immutable_grid(ask, bid)
+                return
+
         # 5. SNIPER LOGIC (Price Banding for Slippage)
-        # Using the Golden Formula Anchors
         
         if self.buy_trigger_name == "top":
-            # Ask Price must hit Top Trigger
             if self.anchor_top_ask <= ask <= (self.anchor_top_ask + self.max_slippage):
                 print(f"⚡ SNIPER: Hit Top (Ask {ask})")
                 self.execute_market_order("buy", ask)
@@ -174,7 +200,6 @@ class GridStrategy:
                 self.execute_market_order("buy", ask)
 
         if self.sell_trigger_name == "bottom":
-            # Bid Price must hit Bottom Trigger
             if (self.anchor_bottom_bid - self.max_slippage) <= bid <= self.anchor_bottom_bid:
                 print(f"⚡ SNIPER: Hit Bottom (Bid {bid})")
                 self.execute_market_order("sell", bid)
@@ -193,28 +218,21 @@ class GridStrategy:
         user_spread = float(self.config.get('spread', 6.0))
         broker_spread = ask - bid
         
-        # Ensure offset is positive. If user_spread < broker_spread, minimal 0.1 gap.
         offset = max(user_spread - broker_spread, 0.1)
         
-        # Center is current market snapshot
         self.anchor_center_ask = ask
         self.anchor_center_bid = bid
         
-        # Triggers: 
-        # Buy at Top uses Ask Price. Top = CenterAsk + Offset
         self.anchor_top_ask = ask + offset
-        
-        # Sell at Bottom uses Bid Price. Bottom = CenterBid - Offset
         self.anchor_bottom_bid = bid - offset
         
         self.buy_trigger_name = "top"
         self.sell_trigger_name = "bottom"
         
         print(f"⚓ ANCHOR SET ({self.symbol})")
-        print(f"   User Spread: {user_spread} | Broker Spread: {broker_spread:.5f}")
-        print(f"   Calculated Offset: {offset:.5f}")
-        print(f"   Top (Ask): {self.anchor_top_ask:.5f}")
-        print(f"   Bottom (Bid): {self.anchor_bottom_bid:.5f}")
+        print(f"   Center Ask: {self.anchor_center_ask:.5f}")
+        print(f"   Top Trigger: {self.anchor_top_ask:.5f}")
+        print(f"   Bottom Trigger: {self.anchor_bottom_bid:.5f}")
         self.save_state()
 
     def execute_market_order(self, direction, price):
@@ -225,7 +243,7 @@ class GridStrategy:
         self.current_step += 1 
         
         if self.send_market_request_direct(direction, vol):
-            # Transition
+            # State Transition
             if direction == "buy":
                 if self.buy_trigger_name == "top":
                     self.sell_trigger_name = "center"
@@ -285,8 +303,12 @@ class GridStrategy:
             "type_filling": mt5.ORDER_FILLING_FOK,
             "deviation": 5
         }
+        
         res = mt5.order_send(req)
-        return res.retcode == mt5.TRADE_RETCODE_DONE
+        if res.retcode != mt5.TRADE_RETCODE_DONE:
+            print(f"❌ Order Fail: {res.comment}")
+            return False
+        return True
 
     def get_volume(self, step):
         step_lots = self.config.get('step_lots', [])

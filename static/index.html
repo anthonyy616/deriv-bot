@@ -396,6 +396,13 @@
                         class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium transition hover:shadow-lg">
                         Update Configuration
                     </button>
+                    <p
+                        class="text-[12px] text-yellow-600 dark:text-yellow-500 mt-2 p-2 bg-yellow-50 dark:bg-yellow-900/10 rounded border border-yellow-200 dark:border-yellow-900/30">
+                        The <strong>minimum lot size</strong> in all these indexes are <strong>0.01</strong>. <br>
+                        <strong>Note:</strong> On SFX Vol 20, the <strong>minimum stop loss</strong> in pips to place a
+                        valid trade is <strong>80</strong>.
+                        Placing anything below this value will not allow the bot place trades.
+                    </p>
                 </form>
             </div>
 
@@ -423,7 +430,7 @@
             document.getElementById('dashboard').classList.remove('hidden');
             const btn = document.getElementById('login-btn');
             if (btn) btn.innerHTML = 'Sign In / Register';
-            log("✅ Authenticated with Supabase.");
+            log("✅ Authenticated.");
             loadConfig();
             startPolling();
         }
