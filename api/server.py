@@ -31,7 +31,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Auth Cache (60 seconds)
 auth_cache = TTLCache(maxsize=100, ttl=60)
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 bot_manager = BotManager()
 trading_engine = TradingEngine(bot_manager)
