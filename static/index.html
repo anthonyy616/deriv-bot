@@ -443,9 +443,12 @@
         }
 
         // --- 2. Robust API Client ---
+<<<<<<< HEAD
         // UPDATE: Point this to your VPS IP and Port 800
         const BASE_URL = "http://45.144.242.97:800";
 
+=======
+>>>>>>> 09e715ff5b7021e7ef175daaff8f4986af86ac95
         async function apiCall(endpoint, method = 'GET', body = null) {
             // Check session validity before every call to prevent 401 loops
             const { data } = await supabase.auth.getSession();
@@ -466,9 +469,13 @@
             if (body) opts.body = JSON.stringify(body);
 
             try {
+<<<<<<< HEAD
                 // UPDATE: We now combine BASE_URL + endpoint
                 // Example: http://45.144.242.97:800/config
                 const res = await fetch(BASE_URL + endpoint, opts);
+=======
+                const res = await fetch(endpoint, opts);
+>>>>>>> 09e715ff5b7021e7ef175daaff8f4986af86ac95
 
                 if (res.status === 401) {
                     console.error("401 Unauthorized - Force Logout");

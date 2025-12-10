@@ -1,1 +1,5 @@
+<<<<<<< HEAD
 {"symbol": "FX Vol 20", "anchor_center_ask": 114471.16, "anchor_center_bid": 114467.08, "anchor_top_ask": 114477.08, "anchor_bottom_bid": 114461.16, "buy_trigger_name": "top", "sell_trigger_name": null, "active_upper_level": 114524.38, "active_lower_level": 114424.38, "current_step": 10, "iteration": 307}
+=======
+{"symbol": "SFX Vol 99", "anchor_center_ask": 16768.67, "anchor_center_bid": 16763.9, "anchor_top_ask": 16773.9, "anchor_bottom_bid": 16758.67, "buy_trigger_name": "top", "sell_trigger_name": "bottom", "current_step": 0, "iteration": 169}
+>>>>>>> 09e715ff5b7021e7ef175daaff8f4986af86ac95
