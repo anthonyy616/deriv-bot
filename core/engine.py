@@ -17,9 +17,8 @@ class TradingEngine:
         self.path = os.getenv("MT5_PATH", "")
 
     async def start(self):
-        print("⚙️ Engine: Initializing Direct MT5 Connection...")
+        print("⚙️ Engine: Initializing Direct MT5 Connection (Monolith)...")
         
-        # 1. Initialize MT5 (Blocking call, run once)
         if not mt5.initialize(path=self.path):
             print(f"❌ MT5 Init Failed: {mt5.last_error()}")
             return
@@ -32,44 +31,40 @@ class TradingEngine:
         await self.run_tick_loop()
 
     async def run_tick_loop(self):
-        # Cache symbol info to avoid API spam
-        symbol = "FX Vol 20" # Default, will be updated by strategy
+        # We assume single-tenant or same-symbol for efficiency in this loop
+        current_symbol = "FX Vol 20"
         
         while self.running:
             try:
-                # 2. Direct API Call (Microsecond latency)
-                # We assume the first bot determines the symbol for now
+                # Dynamic Symbol from Strategy
                 bots = list(self.bot_manager.bots.values())
                 if bots:
-                    symbol = bots[0].config.get('symbol', symbol)
+                    current_symbol = bots[0].config.get('symbol', current_symbol)
                     
-                    # Ensure symbol is selected
-                    mt5.symbol_select(symbol, True)
+                    # Ensure Symbol Selected
+                    mt5.symbol_select(current_symbol, True)
                     
-                    # Get Tick
-                    tick = mt5.symbol_info_tick(symbol)
+                    # Direct API Call - Zero Network Latency
+                    tick = mt5.symbol_info_tick(current_symbol)
                     
                     if tick:
-                        # Get Positions Count (Direct)
-                        positions = mt5.positions_get(symbol=symbol)
+                        # Direct Position Check
+                        positions = mt5.positions_get(symbol=current_symbol)
                         pos_count = len(positions) if positions else 0
                         
                         tick_data = {
                             'ask': tick.ask, 
                             'bid': tick.bid,
-                            'positions_count': pos_count,
-                            'point': mt5.symbol_info(symbol).point
+                            'positions_count': pos_count
                         }
                         
-                        # 3. Fire Strategy Logic (Async)
-                        await asyncio.gather(
-                            *[bot.on_external_tick(tick_data) for bot in bots]
-                        )
+                        # In-Memory Function Call
+                        await asyncio.gather(*[bot.on_external_tick(tick_data) for bot in bots])
                         
             except Exception as e:
-                print(f"Engine Loop Error: {e}")
+                print(f"Engine Error: {e}")
                 
-            # 4. Yield control (Zero Sleep for Max Speed)
+            # Zero Sleep for max performance
             await asyncio.sleep(0)
 
     async def stop(self):

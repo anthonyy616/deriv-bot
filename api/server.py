@@ -38,7 +38,7 @@ trading_engine = TradingEngine(bot_manager)
 
 @app.on_event("startup")
 async def startup_event():
-    print("🚀 Server Starting: Launching High-Speed Engine...")
+    print("🚀 Server Starting: Launching Monolith Engine...")
     asyncio.create_task(trading_engine.start())
 
 class ConfigUpdate(BaseModel):
@@ -53,59 +53,24 @@ class ConfigUpdate(BaseModel):
     max_runtime_minutes: int | None = None
     max_drawdown_usd: float | None = None
 
-# Threaded Auth Helper
-def verify_supabase_token(token):
+def verify_token_sync(token):
     if token in auth_cache: return auth_cache[token]
-    
-    max_retries = 3
-    import time
-    
-    for attempt in range(max_retries):
-        try:
-            user_data = supabase.auth.get_user(token)
-            if user_data and user_data.user:
-                auth_cache[token] = user_data
-                return user_data
-            return None # Invalid user but no error
-            
-        except Exception as e:
-            # Check for connection errors (WinError 10054, etc)
-            err_str = str(e)
-            is_network_error = "10054" in err_str or "Connection" in err_str or "Timeout" in err_str
-            
-            if is_network_error and attempt < max_retries - 1:
-                print(f"⚠️ Auth Network Error (Attempt {attempt+1}/{max_retries}): {e}. Retrying...")
-                time.sleep(0.5)
-                continue
-            
-            # If it's the last attempt or not a network error, re-raise
-            if attempt == max_retries - 1:
-                raise e
-    
+    user = supabase.auth.get_user(token)
+    if user and user.user:
+        auth_cache[token] = user
+        return user
     return None
 
 async def get_current_bot(request: Request):
     auth_header = request.headers.get('Authorization')
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing token")
-    
-    token = auth_header.split(" ")[1]
+    if not auth_header: raise HTTPException(401, "Missing token")
     
     try:
-        # Run auth in thread to prevent blocking
-        user_data = await asyncio.to_thread(verify_supabase_token, token)
-        
-        if not user_data or not user_data.user:
-             raise HTTPException(status_code=401, detail="Invalid Token")
-
-        return await bot_manager.get_or_create_bot(user_data.user.id)
-        
-    except Exception as e:
-        err_str = str(e)
-        if "session_id" in err_str or "403" in err_str:
-             raise HTTPException(status_code=401, detail="Session Expired")
-        print(f"Auth Error: {e}")
-        raise HTTPException(status_code=401, detail="Auth Failed")
+        user = await asyncio.to_thread(verify_token_sync, auth_header.split(" ")[1])
+        if not user: raise HTTPException(401, "Invalid Token")
+        return await bot_manager.get_or_create_bot(user.user.id)
+    except Exception:
+        raise HTTPException(401, "Auth Failed")
 
 @app.get("/")
 async def read_index():
@@ -121,24 +86,22 @@ async def get_config(bot = Depends(get_current_bot)):
 
 @app.post("/config")
 async def update_config(config: ConfigUpdate, bot = Depends(get_current_bot)):
-    old_symbol = bot.config.get('symbol')
-    new_config = {k: v for k, v in config.model_dump().items() if v is not None}
-    updated = bot.config_manager.update_config(new_config)
-    if config.symbol and config.symbol != old_symbol:
+    old_sym = bot.config.get('symbol')
+    data = {k: v for k, v in config.model_dump().items() if v is not None}
+    bot.config_manager.update_config(data)
+    if config.symbol and config.symbol != old_sym:
         await bot.start_ticker()
-    return updated
+    return True
 
 @app.post("/control/start")
 async def start_bot(bot = Depends(get_current_bot)):
-    if bot.running: return {"message": "Running"}
     await bot.start()
-    return {"message": "Started"}
+    return {"status": "started"}
 
 @app.post("/control/stop")
 async def stop_bot(bot = Depends(get_current_bot)):
-    if not bot.running: return {"message": "Stopped"}
     await bot.stop()
-    return {"message": "Stopped"}
+    return {"status": "stopped"}
 
 @app.get("/status")
 async def get_status(bot = Depends(get_current_bot)):
